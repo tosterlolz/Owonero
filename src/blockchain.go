@@ -85,31 +85,58 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 }
 
 // validateBlock - sprawdza poprawność: prevHash, hash, index, PoW
-func (bc *Blockchain) validateBlock(b Block, difficulty int) bool {
+func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool {
+	if len(bc.Chain) == 0 {
+		// Genesis block validation
+		if b.Index != 0 {
+			fmt.Printf("Genesis block validation failed: Index must be 0, got %d\n", b.Index)
+			return false
+		}
+		if b.PrevHash != "" {
+			fmt.Printf("Genesis block validation failed: PrevHash must be empty, got %s\n", b.PrevHash)
+			return false
+		}
+		if calculateHash(b) != b.Hash {
+			fmt.Printf("Genesis block validation failed: Hash mismatch (calculated %s, stored %s)\n", calculateHash(b), b.Hash)
+			return false
+		}
+		return true
+	}
+
 	last := bc.Chain[len(bc.Chain)-1]
 	if b.PrevHash != last.Hash {
+		fmt.Printf("Block %d validation failed: PrevHash mismatch (expected %s, got %s)\n", b.Index, last.Hash, b.PrevHash)
 		return false
 	}
 	if calculateHash(b) != b.Hash {
+		fmt.Printf("Block %d validation failed: Hash mismatch (calculated %s, stored %s)\n", b.Index, calculateHash(b), b.Hash)
 		return false
 	}
 	if b.Index != last.Index+1 {
+		fmt.Printf("Block %d validation failed: Index mismatch (expected %d, got %d)\n", b.Index, last.Index+1, b.Index)
 		return false
 	}
-	// check PoW: hash must start with difficulty zeros
-	targetPrefix := ""
-	for i := 0; i < difficulty; i++ {
-		targetPrefix += "0"
-	}
-	if len(b.Hash) < difficulty || b.Hash[:difficulty] != targetPrefix {
-		return false
+	if !skipPow {
+		// check PoW: hash must start with difficulty zeros
+		targetPrefix := ""
+		for i := 0; i < difficulty; i++ {
+			targetPrefix += "0"
+		}
+		if len(b.Hash) < difficulty || b.Hash[:difficulty] != targetPrefix {
+			return false
+		}
 	}
 	return true
 }
 
 // AddBlock - dodaje blok jeżeli walidacja przejdzie
 func (bc *Blockchain) AddBlock(b Block, difficulty int) bool {
-	if bc.validateBlock(b, difficulty) {
+	return bc.AddBlockSkipPow(b, difficulty, false)
+}
+
+// AddBlockSkipPow - dodaje blok z opcjonalnym pominięciem sprawdzania PoW
+func (bc *Blockchain) AddBlockSkipPow(b Block, difficulty int, skipPow bool) bool {
+	if bc.validateBlock(b, difficulty, skipPow) {
 		bc.Chain = append(bc.Chain, b)
 		return true
 	}

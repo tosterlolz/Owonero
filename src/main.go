@@ -35,7 +35,7 @@ const asciiLogo = `
 
 var daemonDifficulty int
 
-func handleConn(conn net.Conn, bc *Blockchain) {
+func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 	defer conn.Close()
 	fmt.Fprintf(conn, "owonero-daemon height=%d\n", len(bc.Chain)-1)
 	scanner := bufio.NewScanner(conn)
@@ -63,8 +63,31 @@ func handleConn(conn net.Conn, bc *Blockchain) {
 			} else {
 				fmt.Fprintln(conn, "error: block invalid")
 			}
+		case "getpeers":
+			peers := pm.GetPeers()
+			peerAddrs := make([]string, len(peers))
+			for i, p := range peers {
+				peerAddrs[i] = p.Address
+			}
+			bs, _ := json.Marshal(peerAddrs)
+			fmt.Fprintln(conn, string(bs))
+		case "addpeer":
+			if !scanner.Scan() {
+				fmt.Fprintln(conn, "error: expected peer address on next line")
+				continue
+			}
+			peerAddr := strings.TrimSpace(scanner.Text())
+			if peerAddr != "" {
+				pm.AddPeer(peerAddr)
+				fmt.Fprintln(conn, "ok")
+			} else {
+				fmt.Fprintln(conn, "error: empty peer address")
+			}
+		case "sync":
+			syncWithPeers(pm, bc, daemonDifficulty)
+			fmt.Fprintln(conn, "sync initiated")
 		default:
-			fmt.Fprintln(conn, "unknown command. supported: getchain, getheight, submitblock")
+			fmt.Fprintln(conn, "unknown command. supported: getchain, getheight, submitblock, getpeers, addpeer, sync")
 		}
 	}
 }
@@ -90,6 +113,9 @@ func main() {
 	var threads int
 	flag.IntVar(&threads, "t", 1, "number of mining threads")
 	flag.IntVar(&threads, "threads", 1, "number of mining threads")
+	var peersStr string
+	flag.StringVar(&peersStr, "peers", "", "comma-separated list of peer addresses (host:port)")
+	noInit := flag.Bool("no-init", false, "don't initialize blockchain.json, rely on syncing")
 
 	flag.Parse()
 
@@ -101,14 +127,35 @@ func main() {
 	}
 
 	var bc Blockchain
-	if err := bc.LoadFromFile(blockchainFile); err != nil {
-		log.Fatalf("Cannot init blockchain: %v", err)
+	if !*noInit {
+		if err := bc.LoadFromFile(blockchainFile); err != nil {
+			log.Fatalf("Cannot init blockchain: %v", err)
+		}
+		_ = bc.SaveToFile(blockchainFile)
+	} else {
+		fmt.Println("Skipping blockchain initialization (--no-init flag used)")
 	}
-	_ = bc.SaveToFile(blockchainFile)
 
 	if *daemon {
 		daemonDifficulty = *diff
-		runDaemon(*port, &bc)
+		pm := &PeerManager{}
+		// Add initial peers from command line
+		if peersStr != "" {
+			peerList := strings.Split(peersStr, ",")
+			for _, peer := range peerList {
+				peer = strings.TrimSpace(peer)
+				if peer != "" {
+					pm.AddPeer(peer)
+				}
+			}
+		}
+		// Also add the node address as a peer if specified
+		if nodeAddr != "localhost:6969" { // don't add default
+			fmt.Printf("Adding peer from -n flag: %s\n", nodeAddr)
+			pm.AddPeer(nodeAddr)
+		}
+		fmt.Printf("Daemon starting with %d peers\n", len(pm.GetPeers()))
+		runDaemon(*port, &bc, pm, *diff)
 		return
 	}
 

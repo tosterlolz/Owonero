@@ -1,6 +1,8 @@
 # Build Owonero for Windows and Linux
 # This script compiles the Go project for multiple platforms
 
+taskkill.exe /F /IM owonero.exe > $null 2>&1
+
 # Stop on any error
 $ErrorActionPreference = 'Stop'
 
