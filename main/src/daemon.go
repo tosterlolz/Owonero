@@ -196,11 +196,8 @@ func runDaemon(port int, bc *Blockchain, pm *PeerManager, difficulty int) {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second) // sync every 30 seconds
 		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				syncWithPeers(pm, bc, difficulty)
-			}
+		for range ticker.C {
+			syncWithPeers(pm, bc, difficulty)
 		}
 	}()
 

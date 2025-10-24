@@ -202,4 +202,3 @@ This project is open source. See LICENSE file for details.
 ## Disclaimer
 
 This is a educational project. Not intended for production use or financial transactions.</content>
-<parameter name="filePath">c:\Users\cvntkrush3r\Documents\Owonero\README.md

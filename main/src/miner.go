@@ -11,55 +11,6 @@ import (
 	"time"
 )
 
-// syncBlockchain connects to a node, compares chains, and syncs if needed
-func syncBlockchain(nodeAddr string, localBc *Blockchain, difficulty int) error {
-	conn, err := net.Dial("tcp", nodeAddr)
-	if err != nil {
-		return fmt.Errorf("cannot connect to node for sync: %v", err)
-	}
-	defer conn.Close()
-
-	reader := bufio.NewReader(conn)
-	if line, err := reader.ReadString('\n'); err == nil {
-		_ = line // ignore greeting
-	}
-
-	// Get remote chain
-	fmt.Fprintf(conn, "getchain\n")
-	var remoteChain Blockchain
-	if err := json.NewDecoder(reader).Decode(&remoteChain); err != nil {
-		return fmt.Errorf("cannot read remote chain: %v", err)
-	}
-
-	localHeight := len(localBc.Chain) - 1
-	remoteHeight := len(remoteChain.Chain) - 1
-
-	if remoteHeight <= localHeight {
-		fmt.Printf("Local chain is up to date (height: %d)\n", localHeight)
-		return nil
-	}
-
-	fmt.Printf("Syncing blockchain from height %d to %d\n", localHeight, remoteHeight)
-
-	// Validate and add missing blocks
-	for i := localHeight + 1; i <= remoteHeight; i++ {
-		block := remoteChain.Chain[i]
-		if localBc.AddBlock(block, difficulty) {
-			fmt.Printf("Synced block %d/%d\n", i, remoteHeight)
-		} else {
-			return fmt.Errorf("failed to validate block at index %d", i)
-		}
-	}
-
-	// Save the updated blockchain
-	if err := localBc.SaveToFile(blockchainFile); err != nil {
-		return fmt.Errorf("failed to save synced blockchain: %v", err)
-	}
-
-	fmt.Printf("Blockchain sync complete! New height: %d\n", len(localBc.Chain)-1)
-	return nil
-}
-
 // discoverPeers connects to a node and gets its peer list
 func discoverPeers(nodeAddr string) ([]string, error) {
 	conn, err := net.Dial("tcp", nodeAddr)
