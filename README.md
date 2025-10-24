@@ -15,7 +15,7 @@ A simple proof-of-work blockchain cryptocurrency written in Go.
 ```bash
 # Clone the repository
 git clone https://github.com/tosterlolz/Owonero.git
-cd Owonero
+cd Owonero/main
 
 # Build the binary
 ./build.ps1 
