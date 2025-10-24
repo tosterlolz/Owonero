@@ -101,7 +101,7 @@ func main() {
 	g.Print(fmt.Sprintf(asciiLogo, ver))
 
 	daemon := flag.Bool("d", false, "run as daemon")
-	port := flag.Int("p", 34567, "daemon port")
+	port := flag.Int("p", 6969, "daemon port")
 	walletPath := flag.String("w", "wallet.json", "wallet file path")
 	mine := flag.Bool("m", false, "mine blocks (uses -w wallet file)")
 	blocks := flag.Int("b", 0, "how many blocks to mine when mining (0 = mine forever)")
