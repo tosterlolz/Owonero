@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -119,11 +119,14 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 		}
 	}()
 
-	// stats printer: show H/s (hash attempts per second) and SOL/s (accepted blocks/sec)
+	// stats printer: show H/s (hash attempts per second), SOL/s (accepted blocks/sec), and average hashrate
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		prevMined := int64(0)
+		// Store attempts for minute, hour, day
+		var attemptsHistory []int64
+		var attemptsMinute, attemptsHour, attemptsDay int64
 		for {
 			select {
 			case <-done:
@@ -133,18 +136,55 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 				mined := atomic.LoadInt64(&minedCount)
 				sols := mined - prevMined
 				prevMined = mined
+				// Track attempts for averages
+				attemptsHistory = append(attemptsHistory, h)
+				if len(attemptsHistory) > 86400 {
+					attemptsHistory = attemptsHistory[1:]
+				}
+				// Calculate averages
+				attemptsMinute = 0
+				attemptsHour = 0
+				attemptsDay = 0
+				for i := 0; i < len(attemptsHistory); i++ {
+					if i >= len(attemptsHistory)-60 {
+						attemptsMinute += attemptsHistory[i]
+					}
+					if i >= len(attemptsHistory)-3600 {
+						attemptsHour += attemptsHistory[i]
+					}
+					attemptsDay += attemptsHistory[i]
+				}
+				avgMin := float64(attemptsMinute) / 60.0
+				avgHour := float64(attemptsHour) / 3600.0
+				avgDay := float64(attemptsDay) / 86400.0
 				// human-friendly formatting
 				hfmt := fmt.Sprintf("%d", h)
 				if h >= 1000 {
 					hfmt = fmt.Sprintf("%.2fk", float64(h)/1000.0)
 				}
-				fmt.Printf("H/s: %s    SOL/s: %d\n", hfmt, sols)
+				minFmt := fmt.Sprintf("%.0f", avgMin)
+				hourFmt := fmt.Sprintf("%.0f", avgHour)
+				dayFmt := fmt.Sprintf("%.0f", avgDay)
+				if avgMin >= 1000 {
+					minFmt = fmt.Sprintf("%.2fk", avgMin/1000.0)
+				}
+				if avgHour >= 1000 {
+					hourFmt = fmt.Sprintf("%.2fk", avgHour/1000.0)
+				}
+				if avgDay >= 1000 {
+					dayFmt = fmt.Sprintf("%.2fk", avgDay/1000.0)
+				}
+				fmt.Printf("H/s: %s    SOL/s: %d    Avg/min: %s    Avg/hr: %s    Avg/day: %s\n", hfmt, sols, minFmt, hourFmt, dayFmt)
 			}
 		}
 	}()
 
-	// worker goroutines
-	for i := 0; i < threads; i++ {
+	// Use all available CPU cores if threads==0 or threads<1
+	numThreads := threads
+	if numThreads < 1 {
+		numThreads = runtime.NumCPU()
+	}
+	for i := 0; i < numThreads; i++ {
 		go func(id int) {
 			for {
 				if blocksToMine > 0 && atomic.LoadInt64(&minedCount) >= int64(blocksToMine) {
