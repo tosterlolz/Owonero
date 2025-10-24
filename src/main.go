@@ -1,0 +1,131 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"strings"
+
+	"github.com/iskaa02/qalam/gradient"
+)
+
+const blockchainFile = "blockchain.json"
+
+const asciiLogo = `
+⠀⠀⠀⠀⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⡐⢀⣾⣷⠪⠑⠛⠛⠛⠂⠠⠶⢶⣿⣦⡀⠀⠈⢐⢠⣑⠤⣀⠀⠀⠀
+⠀⢀⡜⠀⢸⠟⢁⠔⠁⠀⠀⠀⠀⠀⠀⠀⠉⠻⢷⠀⠀⠀⡦⢹⣷⣄⠀⢀⣀⡀
+⠀⠸⠀⠠⠂⡰⠁⡜⠀⠀⠀⠀⠀⠀⠀⡀⠀⠀⠈⠇⠀⠀⢡⠙⢿⣿⣾⣿⣿⠃
+⠀⠀⠠⠁⠰⠁⢠⢀⠀⠀⡄⠀⠀⠀⠀⠁⠀⠀⠀⠀⠀⠀⠀⢢⠀⢉⡻⣿⣇⠀
+⠀⠠⠁⠀⡇⠀⡀⣼⠀⢰⡇⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⢸⣧⡈⡘⣷⠟⠀     ______          ________ 
+⠀⠀⠀⠈⠀⠀⣧⢹⣀⡮⡇⠀⠀⠀⢸⢸⡄⠀⠀⠀⠀⠀⠀⢸⠈⠈⠲⠇⠀⠀    / __ \ \        / /  ____|
+⠀⢰⠀⢸⢰⢰⠘⠀⢶⠀⢷⡄⠈⠁⡚⡾⢧⢠⡀⢠⠀⠀⠀⢸⡀⠀⠀⠰⠀   | |  | \ \  /\  / /| |__
+⣧⠈⡄⠈⣿⡜⢱⣶⣦⠀⠀⢠⠆⠀⣁⣀⠘⢸⠀⢸⠀⡄⠀⠀⡆⠀⠠⡀⠃  | |  | |\ \/  \/ / |  __| 
+⢻⣷⡡⢣⣿⠃⠘⠿⠏⠀⠀⠀⠂⠀⣿⣿⣿⡇⠀⡀⣰⡗⠄⡀⠰⠀⠀⠀⠀  | |__| | \  /\  /  | |____
+⠀⠙⢿⣜⢻⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠋⢁⢡⠀⡷⣿⠁⠈⠋⠢⢇⠀⡀⠀   \_____/   \/  \/   |______|
+⠀⠀⠈⢻⠀⡆⠀⠀⠀⠀⠀⠀⠀⠀⠐⠆⡘⡇⠀⣼⣿⡇⢀⠀⠀⠀⢱⠁⠀ 
+⠐⢦⣀⠸⡀⢸⣦⣄⡀⠒⠄⠀⠀⠀⢀⣀⣴⠀⣸⣿⣿⠁⣼⢦⠀⠀⠘⠀
+⠀⠀⢎⠳⣇⠀⢿⣿⣿⣶⣤⡶⣾⠿⠋⣁⡆⡰⢿⣿⣿⡜⢣⠀⢆⡄⠇⠀
+⠀⠀⠈⡄⠈⢦⡘⡇⠟⢿⠙⡿⢀⠐⠁⢰⡜⠀⠀⠙⢿⡇⠀⡆⠈⡟⠀⠀      
+`
+
+var daemonDifficulty int
+
+func handleConn(conn net.Conn, bc *Blockchain) {
+	defer conn.Close()
+	fmt.Fprintf(conn, "owonero-daemon height=%d\n", len(bc.Chain)-1)
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch line {
+		case "getchain":
+			bs, _ := json.Marshal(bc)
+			fmt.Fprintln(conn, string(bs))
+		case "getheight":
+			fmt.Fprintln(conn, len(bc.Chain)-1)
+		case "submitblock":
+			if !scanner.Scan() {
+				fmt.Fprintln(conn, "error: expected block json on next line")
+				continue
+			}
+			var blk Block
+			if err := json.Unmarshal([]byte(scanner.Text()), &blk); err != nil {
+				fmt.Fprintln(conn, "error: cannot parse block json:", err)
+				continue
+			}
+			if bc.AddBlock(blk, daemonDifficulty) {
+				_ = bc.SaveToFile(blockchainFile)
+				fmt.Fprintln(conn, "ok")
+			} else {
+				fmt.Fprintln(conn, "error: block invalid")
+			}
+		default:
+			fmt.Fprintln(conn, "unknown command. supported: getchain, getheight, submitblock")
+		}
+	}
+}
+
+func main() {
+	// Print ASCII logo with gradient
+	g, err := gradient.NewGradient("magenta", "pink")
+	if err != nil {
+		log.Fatalf("Failed to create gradient: %v", err)
+	}
+	g.Print(asciiLogo)
+
+	daemon := flag.Bool("d", false, "run as daemon")
+	port := flag.Int("p", 34567, "daemon port")
+	walletPath := flag.String("w", "wallet.json", "wallet file path")
+	mine := flag.Bool("m", false, "mine blocks (uses -w wallet file)")
+	blocks := flag.Int("b", 0, "how many blocks to mine when mining (0 = mine forever)")
+	diff := flag.Int("diff", 3, "mining difficulty (leading zeros)")
+
+	var nodeAddr string
+	flag.StringVar(&nodeAddr, "n", "localhost:6969", "node address host:port")
+	flag.StringVar(&nodeAddr, "node", "localhost:6969", "node address host:port")
+	var threads int
+	flag.IntVar(&threads, "t", 1, "number of mining threads")
+	flag.IntVar(&threads, "threads", 1, "number of mining threads")
+
+	flag.Parse()
+
+	for _, a := range flag.Args() {
+		if strings.Contains(a, ":") && !strings.HasPrefix(a, "OWO") {
+			nodeAddr = a
+			break
+		}
+	}
+
+	var bc Blockchain
+	if err := bc.LoadFromFile(blockchainFile); err != nil {
+		log.Fatalf("Cannot init blockchain: %v", err)
+	}
+	_ = bc.SaveToFile(blockchainFile)
+
+	if *daemon {
+		daemonDifficulty = *diff
+		runDaemon(*port, &bc)
+		return
+	}
+
+	if *mine {
+		if err := startMining(*walletPath, nodeAddr, *diff, *blocks, threads); err != nil {
+			log.Fatalf("Mining failed: %v", err)
+		}
+		return
+	}
+
+	w, err := loadOrCreateWallet(*walletPath)
+	if err != nil {
+		log.Fatalf("Wallet error: %v", err)
+	}
+	if err := bc.LoadFromFile(blockchainFile); err != nil {
+		log.Fatalf("Blockchain load error: %v", err)
+	}
+	fmt.Printf("\033[33mWallet:\033[0m \033[32m%s\033[0m\n", w.Address)
+	fmt.Printf("\033[33mBalance:\033[0m \033[32m%d\033[0m\n", getBalance(w, &bc))
+	fmt.Printf("\033[33mChain height:\033[0m \033[35m%d\033[0m\n", len(bc.Chain)-1)
+}
