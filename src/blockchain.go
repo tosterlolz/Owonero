@@ -182,7 +182,7 @@ func createGenesisBlock() Block {
 	return g
 }
 
-// mineBlock - custom rx/owo PoW: combines SHA3, random memory, and math puzzle
+// mineBlock - optimized rx/owo PoW: combines SHA3, random memory, and math puzzle
 func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64) Block {
 	targetPrefix := ""
 	for i := 0; i < difficulty; i++ {
@@ -193,49 +193,93 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 	nonce := 0
 	memSize := 1024 * 1024 // 1MB buffer for GPU mining
 	mem := make([]byte, memSize)
-	// Deterministic memory buffer: seed with block index and prev hash
+
+	// Pre-calculate block data outside the loop
+	b.Index = prev.Index + 1
+	b.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	b.Transactions = txs
+	b.PrevHash = prev.Hash
+
+	// Seed memory buffer once per block (optimized seeding)
+	seed := sha256.Sum256([]byte(fmt.Sprintf("%d%s", b.Index, b.PrevHash)))
+	// Fill memory in chunks for better performance
+	for i := 0; i < memSize; i += 32 {
+		end := i + 32
+		if end > memSize {
+			end = memSize
+		}
+		copy(mem[i:end], seed[:end-i])
+	}
+
+	// Pre-marshal block data (without nonce)
+	blockForHash := BlockForHash{
+		Index:        b.Index,
+		Timestamp:    b.Timestamp,
+		Transactions: b.Transactions,
+		PrevHash:     b.PrevHash,
+		// Nonce will be set per attempt
+	}
+	blockBytesBase, _ := json.Marshal(blockForHash)
+
+	// Pre-allocate hash input buffer to avoid repeated allocations
+	maxInputSize := len(blockBytesBase) + 1 + 8 + 1 // blockBytes + mem byte + puzzle byte + acc bytes
+	hashInput := make([]byte, 0, maxInputSize)
+
 	for {
-		b = Block{
-			Index:        prev.Index + 1,
-			Timestamp:    time.Now().UTC().Format(time.RFC3339),
-			Transactions: txs,
-			PrevHash:     prev.Hash,
-			Nonce:        nonce,
-		}
-		seed := sha256.Sum256([]byte(fmt.Sprintf("%d%s", b.Index, b.PrevHash)))
-		for i := 0; i < memSize; i++ {
-			mem[i] = seed[i%len(seed)]
-		}
-		blockForHash := BlockForHash{
-			Index:        b.Index,
-			Timestamp:    b.Timestamp,
-			Transactions: b.Transactions,
-			PrevHash:     b.PrevHash,
-			Nonce:        b.Nonce,
-		}
+		b.Nonce = nonce
+
+		// Update blockForHash with current nonce
+		blockForHash.Nonce = nonce
 		blockBytes, _ := json.Marshal(blockForHash)
-		// rx/owo: combine multiple random memory accesses
+
+		// rx/owo: optimized memory access pattern
 		acc := uint64(nonce)
+		// Pre-compute base index to reduce calculations
+		baseIdx := nonce * 31 % memSize
+		step := 7919 % memSize
+
 		for i := 0; i < 8; i++ {
-			idx := (nonce*31 + i*7919) % memSize
+			idx := (baseIdx + i*step) % memSize
 			acc ^= uint64(mem[idx]) << (i * 8)
 		}
 		puzzle := (nonce ^ len(blockBytes)) + int(acc&0xFFFF)
-		hashInput := append(blockBytes, mem[(nonce*13)%memSize])
+
+		// Build hash input efficiently
+		hashInput = hashInput[:0] // reset length, keep capacity
+		hashInput = append(hashInput, blockBytes...)
+		hashInput = append(hashInput, mem[(nonce*13)%memSize])
 		hashInput = append(hashInput, byte(puzzle&0xFF))
-		// Add acc as part of input
-		for i := 0; i < 8; i++ {
-			hashInput = append(hashInput, byte((acc>>(i*8))&0xFF))
-		}
+		// Add acc as 8 bytes (more efficient than byte-by-byte)
+		hashInput = append(hashInput, byte(acc), byte(acc>>8), byte(acc>>16), byte(acc>>24),
+			byte(acc>>32), byte(acc>>40), byte(acc>>48), byte(acc>>56))
+
 		h := sha3.Sum256(hashInput)
-		hashHex := hex.EncodeToString(h[:])
+
 		if attemptsPtr != nil {
 			atomic.AddInt64(attemptsPtr, 1)
 		}
-		if len(hashHex) >= difficulty && hashHex[:difficulty] == targetPrefix {
-			b.Hash = hashHex
+
+		// Check if hash meets difficulty (check raw bytes for better performance)
+		valid := true
+		if difficulty > 0 {
+			// Check bytes directly (each byte represents 2 hex chars)
+			for i := 0; i < (difficulty+1)/2 && i < 32; i++ {
+				b := h[i]
+				if difficulty > i*2 && b>>4 != 0 { // Check high nibble
+					valid = false
+					break
+				}
+				if difficulty > i*2+1 && (b&0x0F) != 0 { // Check low nibble
+					valid = false
+					break
+				}
+			}
+		}
+		if valid {
+			b.Hash = hex.EncodeToString(h[:])
 			break
 		}
+
 		nonce++
 	}
 	return b
@@ -274,13 +318,23 @@ func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool 
 		return false
 	}
 	if !skipPow {
-		// check PoW: hash must start with difficulty zeros (rx/owo)
-		targetPrefix := ""
-		for i := 0; i < difficulty; i++ {
-			targetPrefix += "0"
-		}
-		if len(b.Hash) < difficulty || b.Hash[:difficulty] != targetPrefix {
-			return false
+		// check PoW: hash must start with difficulty zeros (optimized check)
+		if difficulty > 0 && len(b.Hash) >= difficulty {
+			hashBytes := []byte(b.Hash)
+			validPow := true
+			for i := 0; i < (difficulty+1)/2 && i < len(hashBytes)/2; i++ {
+				if difficulty > i*2 && hashBytes[i*2] != '0' {
+					validPow = false
+					break
+				}
+				if difficulty > i*2+1 && hashBytes[i*2+1] != '0' {
+					validPow = false
+					break
+				}
+			}
+			if !validPow {
+				return false
+			}
 		}
 	}
 	return true

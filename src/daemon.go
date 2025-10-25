@@ -117,46 +117,58 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 		return nil // peer is not ahead
 	}
 
-	// Get full chain from peer
-	fmt.Fprintf(conn, "getchain\n")
-	var peerChain Blockchain
-	if err := json.NewDecoder(reader).Decode(&peerChain); err != nil {
-		return fmt.Errorf("cannot read peer chain: %v", err)
-	}
-
 	// Determine which blocks to sync
 	startBlock := localHeight + 1
 	if localHeight < 0 {
 		startBlock = 0 // sync from genesis if local chain is empty
 	}
 
-	// Validate and add missing blocks
 	blocksToSync := peerHeight - localHeight
 	if localHeight < 0 {
 		blocksToSync = peerHeight + 1 // include genesis
 	}
 	fmt.Printf("\033[36mSyncing %d blocks from peer %s (starting from block %d)\033[0m\n", blocksToSync, peerAddr, startBlock)
 
-	for i := startBlock; i <= peerHeight; i++ {
-		if i >= len(peerChain.Chain) {
-			break
-		}
-		block := peerChain.Chain[i]
+	// Sync blocks in chunks to avoid overwhelming the connection
+	const chunkSize = 100
+	totalSynced := 0
 
-		// For genesis block when local chain is empty, accept without validation
-		if len(bc.Chain) == 0 && block.Index == 0 {
-			bc.Chain = append(bc.Chain, block)
-			fmt.Printf("\033[32mAccepted genesis block from peer %s\033[0m\n", peerAddr)
-			continue
+	for chunkStart := startBlock; chunkStart <= peerHeight; chunkStart += chunkSize {
+		chunkEnd := chunkStart + chunkSize - 1
+		if chunkEnd > peerHeight {
+			chunkEnd = peerHeight
 		}
 
-		targetBlockTime := 30 // seconds per block, tune as needed
-		dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
-		if bc.AddBlockSkipPow(block, dynDiff, true) { // skip PoW validation during sync
-			fmt.Printf("\033[32mSynced block %d from peer %s\033[0m\n", i, peerAddr)
-		} else {
-			fmt.Printf("\033[31mBlock %d validation failed\033[0m\n", i)
-			return fmt.Errorf("failed to validate block %d from peer %s", i, peerAddr)
+		fmt.Printf("\033[36mRequesting blocks %d to %d from peer %s\033[0m\n", chunkStart, chunkEnd, peerAddr)
+
+		// Request block range from peer
+		fmt.Fprintf(conn, "getblocks\n")
+		fmt.Fprintf(conn, "%d %d\n", chunkStart, chunkEnd)
+
+		var blocks []Block
+		if err := json.NewDecoder(reader).Decode(&blocks); err != nil {
+			return fmt.Errorf("cannot read blocks from peer: %v", err)
+		}
+
+		// Validate and add received blocks
+		for _, block := range blocks {
+			// For genesis block when local chain is empty, accept without validation
+			if len(bc.Chain) == 0 && block.Index == 0 {
+				bc.Chain = append(bc.Chain, block)
+				fmt.Printf("\033[32mAccepted genesis block from peer %s\033[0m\n", peerAddr)
+				totalSynced++
+				continue
+			}
+
+			targetBlockTime := 30 // seconds per block, tune as needed
+			dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
+			if bc.AddBlockSkipPow(block, dynDiff, true) { // skip PoW validation during sync
+				fmt.Printf("\033[32mSynced block %d from peer %s\033[0m\n", block.Index, peerAddr)
+				totalSynced++
+			} else {
+				fmt.Printf("\033[31mBlock %d validation failed\033[0m\n", block.Index)
+				return fmt.Errorf("failed to validate block %d from peer %s", block.Index, peerAddr)
+			}
 		}
 	}
 
@@ -179,7 +191,7 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 		return fmt.Errorf("failed to save synced blockchain: %v", err)
 	}
 
-	fmt.Printf("\033[32mSuccessfully synced %d blocks from peer %s\033[0m\n", blocksToSync, peerAddr)
+	fmt.Printf("\033[32mSuccessfully synced %d blocks from peer %s\033[0m\n", totalSynced, peerAddr)
 	return nil
 }
 
