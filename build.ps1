@@ -57,12 +57,12 @@ taskkill.exe /F /IM owonero-arm64.exe > $null 2>&1
 # Define build targets
 $targets = @(
     @{ OS = 'windows'; Arch = 'amd64'; BinaryName = 'owonero-amd64.exe' },
-    # @{ OS = 'windows'; Arch = '386'; BinaryName = 'owonero-x86.exe' },
-    # @{ OS = 'linux'; Arch = '386'; BinaryName = 'owonero-x86' },
-    # @{ OS = 'linux'; Arch = 'arm64'; BinaryName = 'owonero-arm64' }
-    @{ OS = 'linux'; Arch = 'amd64'; BinaryName = 'owonero-amd64' }
-    )
-    
+    @{ OS = 'linux'; Arch = 'amd64'; BinaryName = 'owonero-amd64' },
+    @{ OS = 'windows'; Arch = '386'; BinaryName = 'owonero-x86.exe' },
+    @{ OS = 'linux'; Arch = '386'; BinaryName = 'owonero-x86' },
+    @{ OS = 'linux'; Arch = 'arm64'; BinaryName = 'owonero-arm64' }
+)
+
 $buildResults = @()
 
 foreach ($target in $targets) {
