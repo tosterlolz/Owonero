@@ -81,13 +81,19 @@ class AsyncMiner:
         attempts = 0
 
         try:
-            # Sync blockchain once at the start
+            # Load local blockchain first
             blockchain = Blockchain()
-            if not await self._sync_blockchain(blockchain):
-                print_error(f"Task {task_id}: Failed to sync blockchain, cannot start mining")
+            if not blockchain.load_from_file(BLOCKCHAIN_FILE):
+                print_error(f"Task {task_id}: Failed to load local blockchain")
                 return
 
             last_sync = time.time()
+
+            # Try to sync blockchain from node
+            if await self._sync_blockchain(blockchain):
+                last_sync = time.time()
+            else:
+                print_warning(f"Task {task_id}: Failed to sync blockchain, continuing with local data")
             
             while self.running:
                 # Sync blockchain every 5 minutes
