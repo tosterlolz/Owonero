@@ -2,10 +2,11 @@
 
 ![banner](./assets/owe.png)
 
-A lightweight, proof-of-work blockchain cryptocurrency written in Go. Features automatic updates, peer-to-peer networking, and efficient mining with dynamic difficulty adjustment.
+A lightweight, proof-of-work blockchain cryptocurrency written in Python with async networking. Features automatic updates, peer-to-peer networking, and efficient mining with dynamic difficulty adjustment.
 
 ## ✨ Features
 
+- **Async Networking**: High-performance asynchronous I/O for peer-to-peer communication
 - **Proof-of-Work Mining**: Memory-hard mining algorithm with dynamic difficulty
 - **Peer-to-Peer Networking**: Decentralized network with automatic peer discovery
 - **Automatic Updates**: Self-updating from GitHub releases
@@ -24,7 +25,8 @@ A lightweight, proof-of-work blockchain cryptocurrency written in Go. Features a
 - **Network**: Stable internet connection for peer-to-peer communication
 
 ### Software Requirements
-- **Go**: Version 1.19 or later (for building from source)
+- **Python**: Version 3.11 or later
+- **pip**: Python package installer
 - **Git**: For cloning the repository
 - **GitHub CLI** (optional): For automated releases
 
@@ -35,53 +37,59 @@ A lightweight, proof-of-work blockchain cryptocurrency written in Go. Features a
 
 ## 🚀 Quick Start
 
-### 1. Download and Install
-
-#### Option A: Download Pre-built Binary
-```bash
-# Download latest release from GitHub
-curl -L https://github.com/tosterlolz/Owonero/releases/latest/download/owonero-linux-amd64.zip -o owonero.zip
-unzip owonero.zip
-chmod +x owonero
-```
-
-#### Option B: Build from Source
+#### Run
 ```bash
 # Clone repository
 git clone https://github.com/tosterlolz/Owonero.git
 cd Owonero
 
-# Build for your platform
-./build.ps1                    # Windows PowerShell
-# OR
-go build -o owonero ./src
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Run the application
+python src/main.py
+```
+
+#### Update Existing Installation
+```bash
+# Navigate to your Owonero directory
+cd Owonero
+
+# Pull latest changes
+git pull origin python-experimental
+
+# Update Python dependencies (if requirements.txt changed)
+pip install -r requirements.txt --upgrade
+
+# Restart your application
+python src/main.py
 ```
 
 ### 2. Start Your First Node
 
 ```bash
 # Start daemon (network node)
-./owonero -d -p 6969
+python src/main.py -d -p 6969
 
 # Or connect to existing network
-./owonero -d -n existing-node.com:6969 -p 6969
+python src/main.py -d -n existing-node.com:6969 -p 6969
 ```
 
 ### 3. Start Mining
 
 ```bash
 # Mine with 4 threads
-./owonero -m -n localhost:6969 -t 4
+python src/main.py -m -n localhost:6969 -t 4
 
 # Mine to remote node
-./owonero -m -n node.example.com:6969 -t 8
+python src/main.py -m -n node.example.com:6969 -t 8
 ```
 
 ### 4. Check Your Wallet
 
 ```bash
 # View balance and address
-./owonero
+python src/main.py
 ```
 
 ## 📖 Usage Guide
@@ -90,7 +98,7 @@ go build -o owonero ./src
 
 #### Daemon Mode
 ```bash
-./owonero -d [options]
+python src/main.py -d [options]
 ```
 - `-d`: Run as network daemon
 - `-p PORT`: Listening port (default: 6969)
@@ -101,7 +109,7 @@ go build -o owonero ./src
 
 #### Mining Mode
 ```bash
-./owonero -m [options]
+python src/main.py -m [options]
 ```
 - `-m`: Start mining
 - `-n HOST:PORT`: Node to submit blocks to
@@ -111,7 +119,7 @@ go build -o owonero ./src
 
 #### Wallet Mode
 ```bash
-./owonero [options]
+python src/main.py [options]
 ```
 - `-w FILE`: Custom wallet file
 - `-tui`: Launch terminal user interface
@@ -158,6 +166,7 @@ ok
 
 ### Prerequisites
 - Python 3.11+
+- pip (Python package installer)
 - Git
 - PowerShell (Windows) or Bash (Linux/macOS)
 
@@ -169,8 +178,10 @@ git clone --recursive https://github.com/tosterlolz/Owonero.git
 cd Owonero
 
 # Install dependencies
-python3 -m pip install -r requirements.txt
-python3 ./src/main.py
+pip install -r requirements.txt
+
+# Run the application
+python src/main.py
 ```
 
 ## 🔄 Continuous Integration
@@ -248,10 +259,10 @@ echo "getpeers" | nc localhost 6969
 ### Debug Mode
 ```bash
 # Enable debug logging
-OWONERO_LOG_LEVEL=debug ./owonero -d
+OWONERO_LOG_LEVEL=debug python src/main.py -d
 
-# Build with debug symbols
-go build -tags debug -o owonero-debug ./src
+# Run with Python debugger
+python -m pdb src/main.py -d
 ```
 
 ### Getting Help
@@ -266,11 +277,11 @@ We welcome contributions! Please follow these steps:
 1. **Fork** the repository
 2. **Create** a feature branch: `git checkout -b feature-name`
 3. **Make** your changes with tests
-4. **Test** thoroughly: `go test ./...`
+4. **Test** thoroughly: `python -m pytest` (if tests are added)
 5. **Submit** a pull request
 
 ### Development Guidelines
-- Follow Go coding standards
+- Follow Python coding standards (PEP 8)
 - Add tests for new features
 - Update documentation
 - Use meaningful commit messages
@@ -278,15 +289,16 @@ We welcome contributions! Please follow these steps:
 ### Project Structure
 ```
 src/
-├── main.go           # CLI and main entry point
-├── daemon.go         # Network daemon and peer management
-├── miner.go          # Mining logic and thread management
-├── wallet.go         # Wallet creation and management
-├── wallet_tui.go     # Terminal user interface
-├── blockchain.go     # Core blockchain logic
-├── web_stats.go      # Web statistics interface
-└── go.mod           # Go module dependencies
+├── main.py           # CLI and main entry point
+├── daemon.py         # Async network daemon and peer management
+├── miner.py          # Async mining logic and task management
+├── wallet.py         # Wallet creation and management
+├── wallet_tui.py     # Terminal user interface
+├── blockchain.py     # Core blockchain logic
+├── web_stats.py      # Async web statistics interface
+└── utils.py          # Utility functions
 
+requirements.txt      # Python dependencies
 build.ps1            # Cross-platform build script
 README.md           # This file
 LICENSE             # MIT License

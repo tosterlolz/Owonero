@@ -6,7 +6,7 @@ Async HTTP server providing blockchain and network statistics
 import json
 import asyncio
 from aiohttp import web
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import time
 
 from utils import print_error, print_success, print_info, GREEN, RESET
@@ -62,7 +62,7 @@ class WebStatsServer:
     async def serve_homepage(self, request: web.Request) -> web.Response:
         """Serve the main statistics page"""
         height = self.blockchain.get_height()
-        peer_count = len(self.peer_manager.get_peers())
+        peer_count = len(await self.peer_manager.get_peers())
 
         html = f"""
 <!DOCTYPE html>
@@ -143,7 +143,7 @@ class WebStatsServer:
             'blockchain_height': self.blockchain.get_height(),
             'total_blocks': len(self.blockchain.chain),
             'total_transactions': sum(len(block.transactions) for block in self.blockchain.chain),
-            'peer_count': len(self.peer_manager.get_peers()),
+            'peer_count': len(await self.peer_manager.get_peers()),
             'timestamp': time.time()
         }
 
@@ -166,7 +166,7 @@ class WebStatsServer:
 
     async def serve_peers(self, request: web.Request) -> web.Response:
         """Serve peer list as JSON"""
-        peers = self.peer_manager.get_peers()
+        peers = await self.peer_manager.get_peers()
         return web.json_response(peers)
 
     async def serve_blockchain(self, request: web.Request) -> web.Response:
@@ -190,7 +190,7 @@ class WebStatsServer:
         raise web.HTTPNotFound()
 
 
-async def start_web_stats_server(blockchain: Blockchain, peer_manager: PeerManager, port: int = 6767) -> WebStatsServer:
+async def start_web_stats_server(blockchain: Blockchain, peer_manager: PeerManager, port: int = 6767) -> Optional[WebStatsServer]:
     """Start the async web statistics server"""
     server = WebStatsServer(blockchain, peer_manager, port)
     if await server.start():

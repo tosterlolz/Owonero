@@ -42,6 +42,10 @@ class Wallet:
         # Handle both Go format (privkey/pubkey) and Python format (private_key_pem/public_key_pem)
         private_key_pem = data.get('private_key_pem') or data.get('privkey')
         public_key_pem = data.get('public_key_pem') or data.get('pubkey')
+        
+        if not private_key_pem or not public_key_pem:
+            raise ValueError("Wallet data missing private or public key")
+            
         return cls(
             address=data['address'],
             private_key_pem=private_key_pem,
@@ -54,17 +58,19 @@ def generate_wallet() -> Wallet:
     if ecdsa is None:
         raise ImportError("ecdsa package required for wallet generation")
 
+    assert ecdsa is not None  # Type guard for static analysis
+
     # Generate ECDSA keypair
     private_key = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
     public_key = private_key.verifying_key
 
     # Convert to PEM format
-    private_key_pem = private_key.to_pem().decode()
-    public_key_pem = public_key.to_pem().decode()
+    private_key_pem = private_key.to_pem().decode()  # type: ignore
+    public_key_pem = public_key.to_pem().decode()  # type: ignore
 
     # Create address from public key hash
     import hashlib
-    pub_key_bytes = public_key.to_string("compressed")
+    pub_key_bytes = public_key.to_string("compressed")  # type: ignore
     address = "OWO" + hashlib.sha256(pub_key_bytes).hexdigest()[:38].upper()
 
     return Wallet(address, private_key_pem, public_key_pem)
@@ -199,14 +205,16 @@ def import_wallet_from_private_key(private_key_pem: str) -> Optional[Wallet]:
         if ecdsa is None:
             raise ImportError("ecdsa package required")
 
+        assert ecdsa is not None  # Type guard for static analysis
+
         private_key = ecdsa.SigningKey.from_pem(private_key_pem.encode())
         public_key = private_key.verifying_key
 
-        public_key_pem = public_key.to_pem().decode()
+        public_key_pem = public_key.to_pem().decode()  # type: ignore
 
         # Create address
         import hashlib
-        pub_key_bytes = public_key.to_string("compressed")
+        pub_key_bytes = public_key.to_string("compressed")  # type: ignore
         address = "OWO" + hashlib.sha256(pub_key_bytes).hexdigest()[:38].upper()
 
         return Wallet(address, private_key_pem, public_key_pem)

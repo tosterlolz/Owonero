@@ -6,11 +6,11 @@ Async peer-to-peer networking and block synchronization
 import asyncio
 import json
 import logging
-from typing import List, Dict, Set, Optional, Tuple
+from typing import List, Set, Optional, Tuple
 import random
 
 from utils import print_error, print_success, print_info, print_warning
-from blockchain import Blockchain, Block, Transaction, mine_block
+from blockchain import Blockchain, Block
 from wallet import Wallet, get_wallet_info
 
 # Set up logging for asyncio

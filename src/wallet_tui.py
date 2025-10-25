@@ -7,7 +7,7 @@ import os
 import sys
 import time
 import asyncio
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 
 from utils import print_error, print_success, print_info, print_warning, RED, GREEN, YELLOW, BLUE, CYAN, RESET, BOLD
 from wallet import Wallet, load_or_create_wallet, get_balance, send_transaction, validate_address
@@ -36,7 +36,7 @@ def print_menu(options: list) -> None:
     print()
 
 
-def get_user_input(prompt: str, validator: callable = None) -> str:
+def get_user_input(prompt: str, validator: Optional[Callable[[str], bool]] = None) -> str:
     """Get user input with optional validation"""
     while True:
         try:

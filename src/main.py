@@ -61,10 +61,11 @@ async def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  owonero -d -p 6969                    # Start daemon on port 6969
-  owonero -m -n localhost:6969 -t 4     # Mine with 4 threads
-  owonero -tui                          # Launch wallet TUI
-  owonero                               # Show wallet balance
+  main.py -d -p 6969                         # Start daemon on port 6969
+  main.py -m -n localhost:6969 -t 4          # Mine with 4 threads to default wallet
+  main.py -m -w OWO123... -n localhost:6969  # Mine to specific address
+  main.py -tui                               # Launch wallet TUI
+  main.py                                    # Show wallet balance
         """
     )
 
@@ -80,7 +81,7 @@ Examples:
 
     # Wallet options
     parser.add_argument('-w', '--wallet', default='wallet.json',
-                       help='Wallet file path (default: wallet.json)')
+                       help='Wallet file path (default: wallet.json) OR wallet address to mine to')
 
     # Mining options
     parser.add_argument('-m', '--mine', action='store_true',
