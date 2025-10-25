@@ -18,12 +18,12 @@ func startWebStatsServer(bc *Blockchain, port int) {
 		json.NewEncoder(w).Encode(stats)
 	})
 
-	fmt.Printf("\033[32mWeb stats server listening on :%d\033[0m\n", port)
-	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/index.html")
+		http.ServeFile(w, r, "index.html")
 	})
 
+	fmt.Printf("\033[32mWeb stats server listening on :%d\033[0m\n", port)
+	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
 
 func getActiveMiners() int {
