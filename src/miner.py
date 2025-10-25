@@ -78,15 +78,17 @@ class AsyncMiner:
         blocks_found = 0
         attempts = 0
 
-        try:
-            while self.running:
+        while self.running:
+            try:
                 # Get current blockchain state from node
                 blockchain = Blockchain()
                 if not await self._sync_blockchain(blockchain):
+                    print_error(f"Task {task_id}: Failed to sync blockchain from node.")
                     await asyncio.sleep(5)  # Wait before retry
                     continue
 
                 if len(blockchain.chain) == 0:
+                    print_error(f"Task {task_id}: Blockchain is empty after sync.")
                     await asyncio.sleep(1)
                     continue
 
@@ -127,15 +129,12 @@ class AsyncMiner:
 
                 # Small delay to prevent overwhelming the node
                 await asyncio.sleep(0.1)
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print_error(f"Async mining task {task_id} error: {e}")
-        finally:
-            async with self.lock:
-                self.total_attempts += attempts
-                self.blocks_found += blocks_found
+            except Exception as e:
+                print_error(f"Async mining task {task_id} error: {e}")
+                await asyncio.sleep(2)
+        async with self.lock:
+            self.total_attempts += attempts
+            self.blocks_found += blocks_found
 
     async def _stats_worker(self) -> None:
         """Async statistics reporting task"""
