@@ -2,8 +2,9 @@ package main
 
 import (
 	"crypto/ecdsa"
-	"crypto/rand"
+	crand "crypto/rand"
 	"crypto/sha256"
+	"crypto/sha3"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -13,8 +14,6 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
-
-	"golang.org/x/crypto/scrypt"
 )
 
 // Transaction reprezentuje prostą transakcję
@@ -66,7 +65,7 @@ func SignTransaction(tx *Transaction, privPem string) error {
 	// Hashujemy dane transakcji
 	msg := fmt.Sprintf("%s|%s|%d", tx.From, tx.To, tx.Amount)
 	hash := sha256.Sum256([]byte(msg))
-	r, s, err := ecdsa.Sign(rand.Reader, priv, hash[:])
+	r, s, err := ecdsa.Sign(crand.Reader, priv, hash[:])
 	if err != nil {
 		return fmt.Errorf("błąd podpisywania: %v", err)
 	}
@@ -149,13 +148,8 @@ func createGenesisBlock() Block {
 	return g
 }
 
-// mineBlock - proof-of-work: hash musi zaczynać się od difficulty zer
-// If attemptsPtr != nil, the function will atomically increment *attemptsPtr for each hash attempt.
+// mineBlock - custom rx/owo PoW: combines SHA3, random memory, and math puzzle
 func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64) Block {
-	// Scrypt parameters: N=16384, r=8, p=1 (tune for your hardware/network)
-	N := 1 << 14
-	r := 8
-	p := 1
 	targetPrefix := ""
 	for i := 0; i < difficulty; i++ {
 		targetPrefix += "0"
@@ -163,6 +157,9 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 
 	var b Block
 	nonce := 0
+	memSize := 1024 * 1024 // 1MB buffer for GPU mining
+	mem := make([]byte, memSize)
+	crand.Read(mem)
 	for {
 		b = Block{
 			Index:        prev.Index + 1,
@@ -171,25 +168,35 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 			PrevHash:     prev.Hash,
 			Nonce:        nonce,
 		}
-		// Use block data as scrypt password, prevHash as salt
 		blockBytes, _ := json.Marshal(b)
-		scryptHash, err := scrypt.Key(blockBytes, []byte(prev.Hash), N, r, p, 32)
+		// rx/owo: combine multiple random memory accesses
+		acc := uint64(nonce)
+		for i := 0; i < 8; i++ {
+			idx := (nonce*31 + i*7919) % memSize
+			acc ^= uint64(mem[idx]) << (i * 8)
+		}
+		puzzle := (nonce ^ len(blockBytes)) + int(acc&0xFFFF)
+		hashInput := append(blockBytes, mem[(nonce*13)%memSize])
+		hashInput = append(hashInput, byte(puzzle&0xFF))
+		// Add acc as part of input
+		for i := 0; i < 8; i++ {
+			hashInput = append(hashInput, byte((acc>>(i*8))&0xFF))
+		}
+		h := sha3.Sum256(hashInput)
+		hashHex := hex.EncodeToString(h[:])
 		if attemptsPtr != nil {
 			atomic.AddInt64(attemptsPtr, 1)
 		}
-		if err == nil {
-			h := hex.EncodeToString(scryptHash)
-			if len(h) >= difficulty && h[:difficulty] == targetPrefix {
-				b.Hash = h
-				break
-			}
+		if len(hashHex) >= difficulty && hashHex[:difficulty] == targetPrefix {
+			b.Hash = hashHex
+			break
 		}
 		nonce++
 	}
 	return b
 }
 
-// validateBlock - sprawdza poprawność: prevHash, hash, index, PoW
+// validateBlock - sprawdza poprawność: prevHash, hash, index, PoW (rx/owo)
 func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool {
 	if len(bc.Chain) == 0 {
 		// Genesis block validation
@@ -222,7 +229,7 @@ func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool 
 		return false
 	}
 	if !skipPow {
-		// check PoW: hash must start with difficulty zeros
+		// check PoW: hash must start with difficulty zeros (rx/owo)
 		targetPrefix := ""
 		for i := 0; i < difficulty; i++ {
 			targetPrefix += "0"
