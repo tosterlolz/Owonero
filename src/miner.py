@@ -37,12 +37,10 @@ class AsyncMiner:
 
         self.running = True
         self.tasks = []
-        self.start_time = time.time()
 
         print_info(f"Starting async mining with {self.threads} concurrent tasks...")
         print_info(f"Wallet: {self.wallet_address}")
         print_info(f"Node: {self.node_address}")
-        print_info("⛏️  Mining started - monitoring hashrate every 10 seconds...")
 
         # Start mining tasks
         for i in range(self.threads):
@@ -81,27 +79,12 @@ class AsyncMiner:
         attempts = 0
 
         try:
-            # Load local blockchain first
-            blockchain = Blockchain()
-            if not blockchain.load_from_file(BLOCKCHAIN_FILE):
-                print_error(f"Task {task_id}: Failed to load local blockchain")
-                return
-
-            last_sync = time.time()
-
-            # Try to sync blockchain from node
-            if await self._sync_blockchain(blockchain):
-                last_sync = time.time()
-            else:
-                print_warning(f"Task {task_id}: Failed to sync blockchain, continuing with local data")
-            
             while self.running:
-                # Sync blockchain every 5 minutes
-                if time.time() - last_sync > 300:
-                    if not await self._sync_blockchain(blockchain):
-                        print_warning(f"Task {task_id}: Failed to sync blockchain, continuing with cached data")
-                    else:
-                        last_sync = time.time()
+                # Get current blockchain state from node
+                blockchain = Blockchain()
+                if not await self._sync_blockchain(blockchain):
+                    await asyncio.sleep(5)  # Wait before retry
+                    continue
 
                 if len(blockchain.chain) == 0:
                     await asyncio.sleep(1)
@@ -130,15 +113,11 @@ class AsyncMiner:
 
                 attempts += block_attempts
 
-                # Update total attempts in real-time
-                async with self.lock:
-                    self.total_attempts += block_attempts
-
                 # Submit block to node
                 if await self._submit_block(block):
                     blocks_found += 1
                     hashrate = block_attempts / (end_time - start_time)
-                    print_success(f"🎉 BLOCK FOUND! Task {task_id}: Block {block.index} mined! Hashrate: {hashrate:.2f} H/s")
+                    print_success(f"Task {task_id}: Block {block.index} found! Hashrate: {hashrate:.1f} H/s")
 
                     # Check if we've reached the block limit
                     if max_blocks > 0 and blocks_found >= max_blocks:
@@ -154,38 +133,22 @@ class AsyncMiner:
         except Exception as e:
             print_error(f"Async mining task {task_id} error: {e}")
         finally:
-            # Only add remaining attempts that weren't updated in real-time
             async with self.lock:
+                self.total_attempts += attempts
                 self.blocks_found += blocks_found
 
     async def _stats_worker(self) -> None:
-        """Async statistics reporting task (accurate hashrate)"""
-        last_attempts = 0
-        last_time = time.time()
+        """Async statistics reporting task"""
+        start_time = time.time()
 
         try:
             while self.running:
-                await asyncio.sleep(10)
+                await asyncio.sleep(60)  # Report every minute
 
-                current_attempts = self.total_attempts
-                current_time = time.time()
-
-                delta_attempts = current_attempts - last_attempts
-                delta_time = current_time - last_time
-
-                if delta_time > 0:
-                    instant_hashrate = delta_attempts / delta_time
-                    avg_hashrate = current_attempts / (current_time - (self.start_time if hasattr(self, 'start_time') else current_time))
-                    print_info(
-                        f"⛏️  Mining - Blocks: {self.blocks_found}, "
-                        f"Instant Hashrate: {instant_hashrate:.2f} H/s, "
-                        f"Average Hashrate: {avg_hashrate:.2f} H/s, "
-                        f"Total Attempts: {current_attempts}"
-                    )
-
-                last_attempts = current_attempts
-                last_time = current_time
-
+                elapsed = time.time() - start_time
+                if elapsed > 0:
+                    hashrate = self.total_attempts / elapsed
+                    print_info(f"Async mining stats - Blocks: {self.blocks_found}, Attempts: {self.total_attempts}, Hashrate: {hashrate:.1f} H/s")
         except asyncio.CancelledError:
             pass
 
@@ -210,6 +173,7 @@ class AsyncMiner:
             return True
 
         except Exception as e:
+            print_error(f"Failed to sync blockchain: {e}")
             return False
 
     async def _submit_block(self, block: Block) -> bool:
@@ -256,22 +220,15 @@ async def start_async_mining(wallet_or_address: str, node_address: str, blocks: 
             print_info("Received shutdown signal...")
             asyncio.create_task(miner.stop_mining())
 
-        # Handle signals in asyncio way (skip on Windows if not available)
-        try:
-            loop = asyncio.get_running_loop()
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, signal_handler)
-        except (OSError, RuntimeError) as e:
-            # Signal handling not available on this platform
-            print_info("Signal handling not available, mining will continue until interrupted")
+        # Handle signals in asyncio way
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, signal_handler)
 
         # Start mining
-        print_info("Attempting to start mining...")
         if not await miner.start_mining(blocks):
             print_error("Failed to start async mining")
             return False
-
-        print_success("Mining started successfully")
 
         # Keep main task alive
         try:
@@ -285,8 +242,7 @@ async def start_async_mining(wallet_or_address: str, node_address: str, blocks: 
         return True
 
     except Exception as e:
-        error_msg = str(e) if e else "Unknown error"
-        print_error(f"Async mining error: {error_msg}")
+        print_error(f"Async mining error: {e}")
         return False
 
 
