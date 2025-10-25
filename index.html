@@ -23,7 +23,7 @@
     <script>
         async function fetchStats() {
             try {
-                const res = await fetch('http://localhost:6767/stats');
+                const res = await fetch('http://owonero.yabai.buzz:6767/stats');
                 const data = await res.json();
                 document.getElementById('chain_height').textContent = data.chain_height;
                 document.getElementById('latest_block_hash').textContent = data.latest_block_hash;
