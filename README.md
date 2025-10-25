@@ -157,24 +157,9 @@ ok
 ## 🛠️ Building from Source
 
 ### Prerequisites
-- Go 1.19+
+- Python 3.11+
 - Git
 - PowerShell (Windows) or Bash (Linux/macOS)
-
-### Build Commands
-
-```bash
-# Windows (PowerShell)
-./build.ps1                    # Build for current platform
-./build.ps1 -Help             # Show help
-
-# Linux/macOS
-go build -o owonero ./src     # Single platform build
-
-# Cross-platform build
-GOOS=linux GOARCH=amd64 go build -o owonero-linux ./src
-GOOS=windows GOARCH=amd64 go build -o owonero-windows.exe ./src
-```
 
 ### Development Setup
 
@@ -184,13 +169,8 @@ git clone --recursive https://github.com/tosterlolz/Owonero.git
 cd Owonero
 
 # Install dependencies
-go mod download
-
-# Run tests
-go test ./...
-
-# Build with debug info
-go build -tags debug -o owonero-debug ./src
+python3 -m pip install -r requirements.txt
+python3 ./src/main.py
 ```
 
 ## 🔄 Continuous Integration
