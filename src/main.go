@@ -13,7 +13,7 @@ import (
 )
 
 const blockchainFile = "blockchain.json"
-const ver = "0.2.1"
+const ver = "0.3.0"
 
 const asciiLogo = `
 ⠀⠀⠀⠀⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
