@@ -34,6 +34,7 @@ const asciiLogo = `
 `
 
 var daemonDifficulty int
+var miners []string
 
 func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 	defer conn.Close()
@@ -42,6 +43,9 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch line {
+		case "mineractive":
+			miners = append(miners, conn.RemoteAddr().String())
+			fmt.Fprintln(conn, "ok")
 		case "getchain":
 			bs, _ := json.Marshal(bc)
 			fmt.Fprintln(conn, string(bs))
@@ -107,6 +111,36 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 			} else {
 				fmt.Fprintln(conn, "error: empty peer address")
 			}
+		case "removepeer":
+			if !scanner.Scan() {
+				fmt.Fprintln(conn, "error: expected peer address on next line")
+				continue
+			}
+			peerAddr := strings.TrimSpace(scanner.Text())
+			if peerAddr != "" {
+				pm.RemovePeer(peerAddr)
+				fmt.Fprintln(conn, "ok")
+			} else {
+				fmt.Fprintln(conn, "error: empty peer address")
+			}
+		case "getwallet":
+			if !scanner.Scan() {
+				fmt.Fprintln(conn, "error: expected wallet address on next line")
+				continue
+			}
+			walletAddr := strings.TrimSpace(scanner.Text())
+			if walletAddr != "" {
+				// Get wallet information
+				walletInfo := getWalletInfo(walletAddr, bc)
+				if walletInfo != nil {
+					bs, _ := json.Marshal(walletInfo)
+					fmt.Fprintln(conn, string(bs))
+				} else {
+					fmt.Fprintln(conn, "error: wallet not found")
+				}
+			} else {
+				fmt.Fprintln(conn, "error: empty wallet address")
+			}
 		case "sync":
 			syncWithPeers(pm, bc, daemonDifficulty)
 			fmt.Fprintln(conn, "sync initiated")
@@ -118,6 +152,7 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 
 func main() {
 	// Print ASCII logo with gradient
+	var bc Blockchain
 	g, err := gradient.NewGradient("magenta", "pink")
 	if err != nil {
 		log.Fatalf("Failed to create gradient: %v", err)
@@ -125,6 +160,7 @@ func main() {
 	g.Print(fmt.Sprintf(asciiLogo, ver))
 
 	daemon := flag.Bool("d", false, "run as daemon")
+	tui := flag.Bool("tui", false, "run wallet in TUI mode")
 	port := flag.Int("p", 6969, "daemon port")
 	walletPath := flag.String("w", "wallet.json", "wallet file path")
 	mine := flag.Bool("m", false, "mine blocks (uses -w wallet file)")
@@ -142,7 +178,10 @@ func main() {
 	noInit := flag.Bool("no-init", false, "don't initialize blockchain.json, rely on syncing")
 
 	flag.Parse()
-
+	if *tui {
+		wallet_main(nodeAddr)
+		return
+	}
 	for _, a := range flag.Args() {
 		if strings.Contains(a, ":") && !strings.HasPrefix(a, "OWO") {
 			nodeAddr = a
@@ -150,7 +189,6 @@ func main() {
 		}
 	}
 
-	var bc Blockchain
 	if !*noInit {
 		if err := bc.LoadFromFile(blockchainFile); err != nil {
 			log.Fatalf("Cannot init blockchain: %v", err)
@@ -179,6 +217,7 @@ func main() {
 			pm.AddPeer(nodeAddr)
 		}
 		fmt.Printf("Daemon starting with %d peers\n", len(pm.GetPeers()))
+		go startWebStatsServer(&bc, 6767)
 		runDaemon(*port, &bc, pm, *diff)
 		return
 	}

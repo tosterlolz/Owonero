@@ -17,6 +17,13 @@ type Peer struct {
 	Address string `json:"address"`
 }
 
+type WalletInfo struct {
+	Address       string `json:"address"`
+	TotalReceived int64  `json:"total_received"`
+	TotalSent     int64  `json:"total_sent"`
+	Balance       int64  `json:"balance"`
+}
+
 // PeerManager manages the list of known peers
 type PeerManager struct {
 	peers []Peer
@@ -53,6 +60,26 @@ func (pm *PeerManager) RemovePeer(address string) {
 			pm.peers = append(pm.peers[:i], pm.peers[i+1:]...)
 			break
 		}
+	}
+}
+
+func getWalletInfo(address string, bc *Blockchain) *WalletInfo {
+	var totalReceived, totalSent int64
+	for _, block := range bc.Chain {
+		for _, tx := range block.Transactions {
+			if tx.To == address {
+				totalReceived += int64(tx.Amount)
+			}
+			if tx.From == address {
+				totalSent += int64(tx.Amount)
+			}
+		}
+	}
+	return &WalletInfo{
+		Address:       address,
+		TotalReceived: totalReceived,
+		TotalSent:     totalSent,
+		Balance:       totalReceived - totalSent,
 	}
 }
 

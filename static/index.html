@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Owonero Network Stats</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #222; color: #eee; }
+        .container { max-width: 500px; margin: 40px auto; background: #333; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px #000; }
+        h1 { color: #ffb347; }
+        .stat { margin: 15px 0; font-size: 1.2em; }
+        .label { color: #7fffd4; }
+        .value { color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Owonero Network Stats</h1>
+        <div class="stat"><span class="label">Chain Height:</span> <span class="value" id="chain_height">...</span></div>
+        <div class="stat"><span class="label">Latest Block Hash:</span> <span class="value" id="latest_block_hash">...</span></div>
+        <div class="stat"><span class="label">Total Transactions:</span> <span class="value" id="total_transactions">...</span></div>
+        <div class="stat"><span class="label">Active Miners:</span> <span class="value" id="active_miners">...</span></div>
+    </div>
+    <script>
+        async function fetchStats() {
+            try {
+                const res = await fetch('http://localhost:6767/stats');
+                const data = await res.json();
+                document.getElementById('chain_height').textContent = data.chain_height;
+                document.getElementById('latest_block_hash').textContent = data.latest_block_hash;
+                document.getElementById('total_transactions').textContent = data.total_transactions;
+                document.getElementById('active_miners').textContent = data.active_miners;
+            } catch (e) {
+                document.getElementById('chain_height').textContent = 'Error';
+                document.getElementById('latest_block_hash').textContent = 'Error';
+                document.getElementById('total_transactions').textContent = 'Error';
+                document.getElementById('active_miners').textContent = 'Error';
+            }
+        }
+        fetchStats();
+        setInterval(fetchStats, 5000);
+    </script>
+</body>
+</html>

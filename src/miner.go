@@ -11,73 +11,75 @@ import (
 	"time"
 )
 
-// discoverPeers connects to a node and gets its peer list
+// discoverPeers connects to a node and retrieves its peer list
 func discoverPeers(nodeAddr string) ([]string, error) {
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
-		return nil, fmt.Errorf("cannot connect to node for peer discovery: %v", err)
+		return nil, fmt.Errorf("failed to connect to node for peer discovery: %v", err)
 	}
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	if line, err := reader.ReadString('\n'); err == nil {
-		_ = line // ignore greeting
-	}
+	// Ignore greeting
+	reader.ReadString('\n')
 
-	// Get peers
+	// Request peer list
 	fmt.Fprintf(conn, "getpeers\n")
 	var peers []string
 	if err := json.NewDecoder(reader).Decode(&peers); err != nil {
-		return nil, fmt.Errorf("cannot read peers: %v", err)
+		return nil, fmt.Errorf("failed to decode peers: %v", err)
 	}
-
 	return peers, nil
 }
 
-// startMining kopie bloki i wysyła je do node
-// blocksToMine == 0 -> mine forever
+// startMining mines blocks and submits them to the node
+// blocksToMine == 0 means mine forever
 func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, threads int) error {
-	w, err := loadOrCreateWallet(walletPath)
+	wallet, err := loadOrCreateWallet(walletPath)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Mining for wallet %s to node %s\n", w.Address, nodeAddr)
+	fmt.Printf("Mining for wallet %s to node %s\n", wallet.Address, nodeAddr)
 
-	// połącz z node
+	// Connect to node
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
-		return fmt.Errorf("cannot connect to node: %v", err)
+		return fmt.Errorf("failed to connect to node: %v", err)
 	}
 	defer conn.Close()
 
-	// consume possible greeting line from node (e.g. "owonero-daemon ...")
 	reader := bufio.NewReader(conn)
-	if line, err := reader.ReadString('\n'); err == nil {
-		_ = line // ignore greeting
-	}
+	// Ignore greeting
+	reader.ReadString('\n')
 
-	// pobierz ostatni blok node
+	// Report as active miner
+	fmt.Fprintf(conn, "mineractive\n%s\n", wallet.Address)
+	resp, _ := reader.ReadString('\n')
+	_ = resp // ignore response
+
+	// Get latest block from node
 	fmt.Fprintf(conn, "getchain\n")
+	// Skip node greeting line before reading JSON
+	_, _ = reader.ReadString('\n')
 	var chain Blockchain
 	if err := json.NewDecoder(reader).Decode(&chain); err != nil {
-		return fmt.Errorf("cannot read chain from node: %v", err)
+		return fmt.Errorf("failed to read chain from node: %v", err)
 	}
-	var lastBlock = chain.Chain[len(chain.Chain)-1]
+	lastBlock := chain.Chain[len(chain.Chain)-1]
 
-	// Now that we have the connection, tell the node about discovered peers
+	// Share discovered peers with node
 	if peers, err := discoverPeers(nodeAddr); err == nil {
 		fmt.Printf("Discovered %d peers from node, sharing with node\n", len(peers))
 		for _, peer := range peers {
 			if peer != "" && peer != nodeAddr {
 				fmt.Fprintf(conn, "addpeer\n%s\n", peer)
-				resp, _ := reader.ReadString('\n')
-				_ = resp // ignore response
+				reader.ReadString('\n') // Ignore response
 			}
 		}
 	}
 
-	// shared state
+	// Shared state
 	var minedCount int64
 	var attempts int64
 	blockCh := make(chan Block, threads*2)
@@ -88,19 +90,19 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 	var atomicHeadBlock atomic.Value
 	atomicHeadBlock.Store(lastBlock)
 
-	// submitter: single goroutine that sends blocks to node and updates lastBlock
+	// Goroutine: submits blocks to node and updates lastBlock
 	go func() {
 		for {
 			select {
-			case b := <-blockCh:
+			case block := <-blockCh:
 				// Only submit if block is on top of current head
 				headHash := atomicHeadHash.Load().(string)
-				if b.PrevHash != headHash {
-					// stale block, skip submission
+				if block.PrevHash != headHash {
+					// Stale block, skip submission
 					continue
 				}
 				fmt.Fprintf(conn, "submitblock\n")
-				blockJSON, _ := json.Marshal(b)
+				blockJSON, _ := json.Marshal(block)
 				fmt.Fprintf(conn, "%s\n", blockJSON)
 
 				resp, rerr := reader.ReadString('\n')
@@ -114,28 +116,27 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 				}
 				resp = strings.TrimSpace(resp)
 				if resp == "ok" {
-					fmt.Printf("\033[32mBlock accepted! Index=%d Hash=%s\033[0m\n", b.Index, b.Hash)
-					atomicHeadHash.Store(b.Hash)
-					atomicHeadBlock.Store(b)
-				} else {
-					if strings.HasPrefix(resp, "error: block invalid") {
-						fmt.Fprintf(conn, "getchain\n")
-						var ch Blockchain
-						if err := json.NewDecoder(reader).Decode(&ch); err != nil {
-							select {
-							case errCh <- fmt.Errorf("cannot refresh chain after rejection: %v", err):
-							default:
-							}
-							close(done)
-							return
+					fmt.Printf("\033[32mBlock accepted! Index=%d Hash=%s\033[0m\n", block.Index, block.Hash)
+					atomicHeadHash.Store(block.Hash)
+					atomicHeadBlock.Store(block)
+				} else if strings.HasPrefix(resp, "error: block invalid") {
+					fmt.Fprintf(conn, "getchain\n")
+					var refreshedChain Blockchain
+					if err := json.NewDecoder(reader).Decode(&refreshedChain); err != nil {
+						select {
+						case errCh <- fmt.Errorf("failed to refresh chain after rejection: %v", err):
+						default:
 						}
-						if len(ch.Chain) > 0 {
-							atomicHeadHash.Store(ch.Chain[len(ch.Chain)-1].Hash)
-							atomicHeadBlock.Store(ch.Chain[len(ch.Chain)-1])
-						}
-						time.Sleep(200 * time.Millisecond)
-						continue
+						close(done)
+						return
 					}
+					if len(refreshedChain.Chain) > 0 {
+						atomicHeadHash.Store(refreshedChain.Chain[len(refreshedChain.Chain)-1].Hash)
+						atomicHeadBlock.Store(refreshedChain.Chain[len(refreshedChain.Chain)-1])
+					}
+					time.Sleep(200 * time.Millisecond)
+					continue
+				} else {
 					select {
 					case errCh <- fmt.Errorf("node rejected block: %s", resp):
 					default:
@@ -154,14 +155,12 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 		}
 	}()
 
-	// stats printer: show H/s (hash attempts per second), SOL/s (accepted blocks/sec), and average hashrate
+	// Goroutine: prints mining statistics (H/s, SOL/s, averages)
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		prevMined := int64(0)
-		// Store attempts for minute, hour, day
 		var attemptsHistory []int64
-		var attemptsMinute, attemptsHour, attemptsDay int64
 		for {
 			select {
 			case <-done:
@@ -171,15 +170,12 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 				mined := atomic.LoadInt64(&minedCount)
 				sols := mined - prevMined
 				prevMined = mined
-				// Track attempts for averages
 				attemptsHistory = append(attemptsHistory, h)
 				if len(attemptsHistory) > 86400 {
 					attemptsHistory = attemptsHistory[1:]
 				}
 				// Calculate averages
-				attemptsMinute = 0
-				attemptsHour = 0
-				attemptsDay = 0
+				var attemptsMinute, attemptsHour, attemptsDay int64
 				for i := 0; i < len(attemptsHistory); i++ {
 					if i >= len(attemptsHistory)-60 {
 						attemptsMinute += attemptsHistory[i]
@@ -192,7 +188,7 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 				avgMin := float64(attemptsMinute) / 60.0
 				avgHour := float64(attemptsHour) / 3600.0
 				avgDay := float64(attemptsDay) / 86400.0
-				// human-friendly formatting
+				// Format output
 				hfmt := fmt.Sprintf("%d", h)
 				if h >= 1000 {
 					hfmt = fmt.Sprintf("%.2fk", float64(h)/1000.0)
@@ -214,7 +210,7 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 		}
 	}()
 
-	// Use all available CPU cores if threads==0 or threads<1
+	// Use all available CPU cores if threads < 1
 	numThreads := threads
 	if numThreads < 1 {
 		numThreads = runtime.NumCPU()
@@ -225,27 +221,22 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 				if blocksToMine > 0 && atomic.LoadInt64(&minedCount) >= int64(blocksToMine) {
 					return
 				}
-
 				// Always use latest chain head for mining
-				prev := atomicHeadBlock.Load().(Block)
-
-				coinbase := Transaction{From: "coinbase", To: w.Address, Amount: 1}
-				newBlock := mineBlock(prev, []Transaction{coinbase}, initialDifficulty, &attempts)
-
-				// return if signalled to stop
+				prevBlock := atomicHeadBlock.Load().(Block)
+				coinbase := Transaction{From: "coinbase", To: wallet.Address, Amount: 1}
+				newBlock := mineBlock(prevBlock, []Transaction{coinbase}, initialDifficulty, &attempts)
+				// Stop if signalled
 				select {
 				case <-done:
 					return
 				default:
 				}
-
-				// If chain head changed while mining, skip this stale result
+				// If chain head changed while mining, skip stale result
 				headHash := atomicHeadHash.Load().(string)
 				if newBlock.PrevHash != headHash {
 					continue
 				}
-
-				// try send, but don't block forever
+				// Try to send, but don't block forever
 				select {
 				case blockCh <- newBlock:
 				default:
@@ -255,7 +246,7 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 		}(i)
 	}
 
-	// wait for completion or error
+	// Wait for completion or error
 	if blocksToMine > 0 {
 		for {
 			if atomic.LoadInt64(&minedCount) >= int64(blocksToMine) {
@@ -270,7 +261,6 @@ func startMining(walletPath, nodeAddr string, initialDifficulty, blocksToMine, t
 		}
 		return nil
 	}
-
-	// infinite mode: block until an error is reported
+	// Infinite mode: block until an error is reported
 	return <-errCh
 }

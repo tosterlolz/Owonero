@@ -112,7 +112,7 @@ func calculateHash(b Block) string {
 func createGenesisBlock() Block {
 	g := Block{
 		Index:        0,
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		Timestamp:    "2025-10-11T00:00:00Z", // Fixed timestamp for all nodes
 		Transactions: []Transaction{{From: "genesis", To: "network", Amount: 0}},
 		PrevHash:     "",
 		Nonce:        0,
