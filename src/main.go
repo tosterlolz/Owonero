@@ -21,7 +21,7 @@ import (
 )
 
 const blockchainFile = "blockchain.json"
-const ver = "0.3.4"
+const ver = "0.3.5"
 
 type GitHubRelease struct {
 	TagName string        `json:"tag_name"`

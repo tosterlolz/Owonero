@@ -18,7 +18,7 @@ A lightweight, proof-of-work blockchain cryptocurrency written in Go. Features a
 
 ### System Requirements
 - **OS**: Windows 10+, Linux (Ubuntu 18.04+, CentOS 7+), macOS 10.15+
-- **CPU**: 64-bit processor with at least 2 cores
+- **CPU**: 32-bit processor with at least 2 cores
 - **RAM**: 512 MB minimum, 1 GB recommended
 - **Storage**: 100 MB free space for blockchain and binaries
 - **Network**: Stable internet connection for peer-to-peer communication
