@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"sync/atomic"
 	"time"
@@ -12,9 +17,72 @@ import (
 
 // Transaction reprezentuje prostą transakcję
 type Transaction struct {
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Amount int    `json:"amount"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Amount    int    `json:"amount"`
+	Signature string `json:"signature"`
+}
+
+// ...istniejące typy Block, Blockchain...
+
+// SignTransaction - podpisuje transakcję kluczem prywatnym (ECDSA)
+func SignTransaction(tx *Transaction, privPem string) error {
+	privBlock, _ := pem.Decode([]byte(privPem))
+	if privBlock == nil {
+		return fmt.Errorf("nie można zdekodować klucza prywatnego")
+	}
+	priv, err := x509.ParseECPrivateKey(privBlock.Bytes)
+	if err != nil {
+		return fmt.Errorf("nie można sparsować klucza prywatnego: %v", err)
+	}
+	// Hashujemy dane transakcji
+	msg := fmt.Sprintf("%s|%s|%d", tx.From, tx.To, tx.Amount)
+	hash := sha256.Sum256([]byte(msg))
+	r, s, err := ecdsa.Sign(rand.Reader, priv, hash[:])
+	if err != nil {
+		return fmt.Errorf("błąd podpisywania: %v", err)
+	}
+	sigBytes, _ := json.Marshal(struct {
+		R string `json:"r"`
+		S string `json:"s"`
+	}{R: r.Text(16), S: s.Text(16)})
+	tx.Signature = hex.EncodeToString(sigBytes)
+	return nil
+}
+
+// VerifyTransactionSignature - weryfikuje podpis transakcji
+func VerifyTransactionSignature(tx *Transaction, pubPem string) bool {
+	pubBlock, _ := pem.Decode([]byte(pubPem))
+	if pubBlock == nil {
+		return false
+	}
+	pubAny, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
+	if err != nil {
+		return false
+	}
+	pub, ok := pubAny.(*ecdsa.PublicKey)
+	if !ok {
+		return false
+	}
+	msg := fmt.Sprintf("%s|%s|%d", tx.From, tx.To, tx.Amount)
+	hash := sha256.Sum256([]byte(msg))
+	// Dekoduj podpis
+	sigBytes, err := hex.DecodeString(tx.Signature)
+	if err != nil {
+		return false
+	}
+	var sig struct {
+		R string `json:"r"`
+		S string `json:"s"`
+	}
+	if err := json.Unmarshal(sigBytes, &sig); err != nil {
+		return false
+	}
+	r := new(big.Int)
+	s := new(big.Int)
+	r.SetString(sig.R, 16)
+	s.SetString(sig.S, 16)
+	return ecdsa.Verify(pub, hash[:], r, s)
 }
 
 // Block struktura bloku

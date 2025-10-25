@@ -63,6 +63,30 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 			} else {
 				fmt.Fprintln(conn, "error: block invalid")
 			}
+		case "sendtx":
+			if !scanner.Scan() {
+				fmt.Fprintln(conn, "error: expected transaction json on next line")
+				continue
+			}
+			var tx Transaction
+			if err := json.Unmarshal([]byte(scanner.Text()), &tx); err != nil {
+				fmt.Fprintln(conn, "error: cannot parse transaction json:", err)
+				continue
+			}
+			// Weryfikacja podpisu
+			if !VerifyTransactionSignature(&tx, tx.From) { // zakładamy, że pole From to PEM klucza publicznego
+				fmt.Fprintln(conn, "error: invalid transaction signature")
+				continue
+			}
+			// Dodaj do mempoola lub bezpośrednio do bloku (tu uproszczone: do ostatniego bloku)
+			if len(bc.Chain) == 0 {
+				fmt.Fprintln(conn, "error: blockchain empty")
+				continue
+			}
+			last := &bc.Chain[len(bc.Chain)-1]
+			last.Transactions = append(last.Transactions, tx)
+			_ = bc.SaveToFile(blockchainFile)
+			fmt.Fprintln(conn, "ok")
 		case "getpeers":
 			peers := pm.GetPeers()
 			peerAddrs := make([]string, len(peers))
@@ -87,7 +111,7 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 			syncWithPeers(pm, bc, daemonDifficulty)
 			fmt.Fprintln(conn, "sync initiated")
 		default:
-			fmt.Fprintln(conn, "unknown command. supported: getchain, getheight, submitblock, getpeers, addpeer, sync")
+			fmt.Fprintln(conn, "unknown command. supported: getchain, getheight, submitblock, sendtx, getpeers, addpeer, sync")
 		}
 	}
 }
