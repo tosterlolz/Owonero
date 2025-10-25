@@ -13,6 +13,8 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/crypto/scrypt"
 )
 
 // Transaction reprezentuje prostą transakcję
@@ -23,7 +25,33 @@ type Transaction struct {
 	Signature string `json:"signature"`
 }
 
-// ...istniejące typy Block, Blockchain...
+// Dynamic difficulty adjustment
+func (bc *Blockchain) GetDynamicDifficulty(targetBlockTime int) int {
+	minDifficulty := 1
+	maxDifficulty := 8
+	window := 10 // Number of blocks to average
+	if len(bc.Chain) <= window {
+		return minDifficulty
+	}
+	latest := bc.Chain[len(bc.Chain)-1]
+	prev := bc.Chain[len(bc.Chain)-window]
+	tLatest, _ := time.Parse(time.RFC3339, latest.Timestamp)
+	tPrev, _ := time.Parse(time.RFC3339, prev.Timestamp)
+	avgBlockTime := int(tLatest.Sub(tPrev).Seconds()) / window
+	diff := bc.Chain[len(bc.Chain)-1].Index // Use last block's difficulty if stored
+	if avgBlockTime < targetBlockTime {
+		diff++
+	} else if avgBlockTime > targetBlockTime {
+		diff--
+	}
+	if diff < minDifficulty {
+		diff = minDifficulty
+	}
+	if diff > maxDifficulty {
+		diff = maxDifficulty
+	}
+	return diff
+}
 
 // SignTransaction - podpisuje transakcję kluczem prywatnym (ECDSA)
 func SignTransaction(tx *Transaction, privPem string) error {
@@ -124,6 +152,10 @@ func createGenesisBlock() Block {
 // mineBlock - proof-of-work: hash musi zaczynać się od difficulty zer
 // If attemptsPtr != nil, the function will atomically increment *attemptsPtr for each hash attempt.
 func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64) Block {
+	// Scrypt parameters: N=16384, r=8, p=1 (tune for your hardware/network)
+	N := 1 << 14
+	r := 8
+	p := 1
 	targetPrefix := ""
 	for i := 0; i < difficulty; i++ {
 		targetPrefix += "0"
@@ -139,13 +171,18 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 			PrevHash:     prev.Hash,
 			Nonce:        nonce,
 		}
-		h := calculateHash(b)
+		// Use block data as scrypt password, prevHash as salt
+		blockBytes, _ := json.Marshal(b)
+		scryptHash, err := scrypt.Key(blockBytes, []byte(prev.Hash), N, r, p, 32)
 		if attemptsPtr != nil {
 			atomic.AddInt64(attemptsPtr, 1)
 		}
-		if len(h) >= difficulty && h[:difficulty] == targetPrefix {
-			b.Hash = h
-			break
+		if err == nil {
+			h := hex.EncodeToString(scryptHash)
+			if len(h) >= difficulty && h[:difficulty] == targetPrefix {
+				b.Hash = h
+				break
+			}
 		}
 		nonce++
 	}

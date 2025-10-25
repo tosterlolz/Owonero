@@ -13,7 +13,7 @@ import (
 )
 
 const blockchainFile = "blockchain.json"
-const ver = "0.1.3"
+const ver = "0.2.1"
 
 const asciiLogo = `
 ⠀⠀⠀⠀⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
@@ -33,7 +33,7 @@ const asciiLogo = `
 ⠀⠀⠈⡄⠈⢦⡘⡇⠟⢿⠙⡿⢀⠐⠁⢰⡜⠀⠀⠙⢿⡇⠀⡆⠈⡟⠀⠀      
 `
 
-var daemonDifficulty int
+// Removed static daemonDifficulty
 var miners []string
 
 func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
@@ -61,7 +61,9 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 				fmt.Fprintln(conn, "error: cannot parse block json:", err)
 				continue
 			}
-			if bc.AddBlock(blk, daemonDifficulty) {
+			targetBlockTime := 30 // seconds per block, tune as needed
+			dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
+			if bc.AddBlock(blk, dynDiff) {
 				_ = bc.SaveToFile(blockchainFile)
 				fmt.Fprintln(conn, "ok")
 			} else {
@@ -142,7 +144,7 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 				fmt.Fprintln(conn, "error: empty wallet address")
 			}
 		case "sync":
-			syncWithPeers(pm, bc, daemonDifficulty)
+			syncWithPeers(pm, bc)
 			fmt.Fprintln(conn, "sync initiated")
 		default:
 			fmt.Fprintln(conn, "unknown command. supported: getchain, getheight, submitblock, sendtx, getpeers, addpeer, sync")
@@ -165,7 +167,7 @@ func main() {
 	walletPath := flag.String("w", "wallet.json", "wallet file path")
 	mine := flag.Bool("m", false, "mine blocks (uses -w wallet file)")
 	blocks := flag.Int("b", 0, "how many blocks to mine when mining (0 = mine forever)")
-	diff := flag.Int("diff", 3, "mining difficulty (leading zeros)")
+	// Removed static mining difficulty flag
 
 	var nodeAddr string
 	flag.StringVar(&nodeAddr, "n", "localhost:6969", "node address host:port")
@@ -199,7 +201,7 @@ func main() {
 	}
 
 	if *daemon {
-		daemonDifficulty = *diff
+		// Removed static daemonDifficulty assignment
 		pm := &PeerManager{}
 		// Add initial peers from command line
 		if peersStr != "" {
@@ -218,12 +220,12 @@ func main() {
 		}
 		fmt.Printf("Daemon starting with %d peers\n", len(pm.GetPeers()))
 		go startWebStatsServer(&bc, 6767)
-		runDaemon(*port, &bc, pm, *diff)
+		runDaemon(*port, &bc, pm)
 		return
 	}
 
 	if *mine {
-		if err := startMining(*walletPath, nodeAddr, *diff, *blocks, threads); err != nil {
+		if err := startMining(*walletPath, nodeAddr, *blocks, threads); err != nil {
 			log.Fatalf("Mining failed: %v", err)
 		}
 		return

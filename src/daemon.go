@@ -84,7 +84,7 @@ func getWalletInfo(address string, bc *Blockchain) *WalletInfo {
 }
 
 // syncWithPeer attempts to sync blockchain with a specific peer
-func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager, difficulty int) error {
+func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 	fmt.Printf("Attempting to sync with peer %s\n", peerAddr)
 	conn, err := net.Dial("tcp", peerAddr)
 	if err != nil {
@@ -150,7 +150,9 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager, difficulty i
 			continue
 		}
 
-		if bc.AddBlockSkipPow(block, difficulty, true) { // skip PoW validation during sync
+		targetBlockTime := 30 // seconds per block, tune as needed
+		dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
+		if bc.AddBlockSkipPow(block, dynDiff, true) { // skip PoW validation during sync
 			fmt.Printf("Synced block %d from peer %s\n", i, peerAddr)
 		} else {
 			fmt.Printf("Block %d validation failed\n", i)
@@ -182,7 +184,7 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager, difficulty i
 }
 
 // syncWithPeers attempts to sync blockchain with all known peers
-func syncWithPeers(pm *PeerManager, bc *Blockchain, difficulty int) {
+func syncWithPeers(pm *PeerManager, bc *Blockchain) {
 	peers := pm.GetPeers()
 	fmt.Printf("syncWithPeers called with %d peers\n", len(peers))
 	if len(peers) == 0 {
@@ -193,7 +195,7 @@ func syncWithPeers(pm *PeerManager, bc *Blockchain, difficulty int) {
 	synced := false
 
 	for _, peer := range peers {
-		if err := syncWithPeer(peer.Address, bc, pm, difficulty); err != nil {
+		if err := syncWithPeer(peer.Address, bc, pm); err != nil {
 			fmt.Printf("Sync with peer %s failed: %v\n", peer.Address, err)
 		} else {
 			synced = true
@@ -205,7 +207,7 @@ func syncWithPeers(pm *PeerManager, bc *Blockchain, difficulty int) {
 	}
 }
 
-func runDaemon(port int, bc *Blockchain, pm *PeerManager, difficulty int) {
+func runDaemon(port int, bc *Blockchain, pm *PeerManager) {
 	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
@@ -216,7 +218,9 @@ func runDaemon(port int, bc *Blockchain, pm *PeerManager, difficulty int) {
 	// Initial sync with peers if any are configured
 	if len(pm.GetPeers()) > 0 {
 		fmt.Println("Performing initial sync with configured peers...")
-		syncWithPeers(pm, bc, difficulty)
+		targetBlockTime := 30                        // seconds per block, tune as needed
+		_ = bc.GetDynamicDifficulty(targetBlockTime) // can be used for mining, not for sync here
+		syncWithPeers(pm, bc)
 	}
 
 	// Start periodic syncing with peers
@@ -224,7 +228,9 @@ func runDaemon(port int, bc *Blockchain, pm *PeerManager, difficulty int) {
 		ticker := time.NewTicker(30 * time.Second) // sync every 30 seconds
 		defer ticker.Stop()
 		for range ticker.C {
-			syncWithPeers(pm, bc, difficulty)
+			targetBlockTime := 30 // seconds per block, tune as needed
+			_ = bc.GetDynamicDifficulty(targetBlockTime)
+			syncWithPeers(pm, bc)
 		}
 	}()
 
