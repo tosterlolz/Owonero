@@ -85,7 +85,7 @@ func getWalletInfo(address string, bc *Blockchain) *WalletInfo {
 
 // syncWithPeer attempts to sync blockchain with a specific peer
 func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
-	fmt.Printf("Attempting to sync with peer %s\n", peerAddr)
+	fmt.Printf("\033[36mAttempting to sync with peer %s\033[0m\n", peerAddr)
 	conn, err := net.Dial("tcp", peerAddr)
 	if err != nil {
 		return fmt.Errorf("cannot connect to peer %s: %v", peerAddr, err)
@@ -95,7 +95,7 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 	reader := bufio.NewReader(conn)
 	// Read and ignore greeting line
 	if greeting, err := reader.ReadString('\n'); err == nil {
-		fmt.Printf("Connected to peer %s: %s", peerAddr, strings.TrimSpace(greeting))
+		fmt.Printf("\033[32mConnected to peer %s: %s\033[0m", peerAddr, strings.TrimSpace(greeting))
 	}
 
 	// Get peer's chain height first
@@ -109,11 +109,11 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse peer height '%s': %v", heightLine, err)
 	}
-	fmt.Printf("Peer %s height: %d, local height: %d\n", peerAddr, peerHeight, len(bc.Chain)-1)
+	fmt.Printf("\033[33mPeer %s height: %d, local height: %d\033[0m\n", peerAddr, peerHeight, len(bc.Chain)-1)
 
 	localHeight := len(bc.Chain) - 1
 	if peerHeight <= localHeight && localHeight >= 0 {
-		fmt.Printf("Peer %s is not ahead, skipping sync\n", peerAddr)
+		fmt.Printf("\033[33mPeer %s is not ahead, skipping sync\033[0m\n", peerAddr)
 		return nil // peer is not ahead
 	}
 
@@ -135,7 +135,7 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 	if localHeight < 0 {
 		blocksToSync = peerHeight + 1 // include genesis
 	}
-	fmt.Printf("Syncing %d blocks from peer %s (starting from block %d)\n", blocksToSync, peerAddr, startBlock)
+	fmt.Printf("\033[36mSyncing %d blocks from peer %s (starting from block %d)\033[0m\n", blocksToSync, peerAddr, startBlock)
 
 	for i := startBlock; i <= peerHeight; i++ {
 		if i >= len(peerChain.Chain) {
@@ -146,16 +146,16 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 		// For genesis block when local chain is empty, accept without validation
 		if len(bc.Chain) == 0 && block.Index == 0 {
 			bc.Chain = append(bc.Chain, block)
-			fmt.Printf("Accepted genesis block from peer %s\n", peerAddr)
+			fmt.Printf("\033[32mAccepted genesis block from peer %s\033[0m\n", peerAddr)
 			continue
 		}
 
 		targetBlockTime := 30 // seconds per block, tune as needed
 		dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
 		if bc.AddBlockSkipPow(block, dynDiff, true) { // skip PoW validation during sync
-			fmt.Printf("Synced block %d from peer %s\n", i, peerAddr)
+			fmt.Printf("\033[32mSynced block %d from peer %s\033[0m\n", i, peerAddr)
 		} else {
-			fmt.Printf("Block %d validation failed\n", i)
+			fmt.Printf("\033[31mBlock %d validation failed\033[0m\n", i)
 			return fmt.Errorf("failed to validate block %d from peer %s", i, peerAddr)
 		}
 	}
@@ -164,12 +164,12 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 	fmt.Fprintf(conn, "getpeers\n")
 	var peerPeers []string
 	if err := json.NewDecoder(reader).Decode(&peerPeers); err != nil {
-		fmt.Printf("Warning: could not get peer list from %s: %v\n", peerAddr, err)
+		fmt.Printf("\033[33mWarning: could not get peer list from %s: %v\033[0m\n", peerAddr, err)
 	} else {
 		for _, pp := range peerPeers {
 			if pp != "" && pp != peerAddr { // don't add self
 				pm.AddPeer(pp)
-				fmt.Printf("Added peer %s from peer %s\n", pp, peerAddr)
+				fmt.Printf("\033[32mAdded peer %s from peer %s\033[0m\n", pp, peerAddr)
 			}
 		}
 	}
@@ -179,31 +179,31 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 		return fmt.Errorf("failed to save synced blockchain: %v", err)
 	}
 
-	fmt.Printf("Successfully synced %d blocks from peer %s\n", blocksToSync, peerAddr)
+	fmt.Printf("\033[32mSuccessfully synced %d blocks from peer %s\033[0m\n", blocksToSync, peerAddr)
 	return nil
 }
 
 // syncWithPeers attempts to sync blockchain with all known peers
 func syncWithPeers(pm *PeerManager, bc *Blockchain) {
 	peers := pm.GetPeers()
-	fmt.Printf("syncWithPeers called with %d peers\n", len(peers))
+	fmt.Printf("\033[36msyncWithPeers called with %d peers\033[0m\n", len(peers))
 	if len(peers) == 0 {
 		return
 	}
 
-	fmt.Printf("Attempting to sync with %d peers...\n", len(peers))
+	fmt.Printf("\033[36mAttempting to sync with %d peers...\033[0m\n", len(peers))
 	synced := false
 
 	for _, peer := range peers {
 		if err := syncWithPeer(peer.Address, bc, pm); err != nil {
-			fmt.Printf("Sync with peer %s failed: %v\n", peer.Address, err)
+			fmt.Printf("\033[31mSync with peer %s failed: %v\033[0m\n", peer.Address, err)
 		} else {
 			synced = true
 		}
 	}
 
 	if synced {
-		fmt.Printf("Blockchain sync complete. New height: %d\n", len(bc.Chain)-1)
+		fmt.Printf("\033[32mBlockchain sync complete. New height: %d\033[0m\n", len(bc.Chain)-1)
 	}
 }
 
@@ -213,11 +213,11 @@ func runDaemon(port int, bc *Blockchain, pm *PeerManager) {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 	defer ln.Close()
-	fmt.Printf("Daemon listening on :%d  (height=%d)\n", port, len(bc.Chain)-1)
+	fmt.Printf("\033[32mDaemon listening on :%d\033[0m  \033[33m(height=%d)\033[0m\n", port, len(bc.Chain)-1)
 
 	// Initial sync with peers if any are configured
 	if len(pm.GetPeers()) > 0 {
-		fmt.Println("Performing initial sync with configured peers...")
+		fmt.Println("\033[36mPerforming initial sync with configured peers...\033[0m")
 		targetBlockTime := 30                        // seconds per block, tune as needed
 		_ = bc.GetDynamicDifficulty(targetBlockTime) // can be used for mining, not for sync here
 		syncWithPeers(pm, bc)

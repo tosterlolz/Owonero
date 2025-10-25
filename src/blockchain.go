@@ -27,8 +27,8 @@ type Transaction struct {
 // Dynamic difficulty adjustment
 func (bc *Blockchain) GetDynamicDifficulty(targetBlockTime int) int {
 	minDifficulty := 1
-	maxDifficulty := 8
-	window := 10 // Number of blocks to average
+	maxDifficulty := 7 // Lower max difficulty for easier mining
+	window := 10       // Number of blocks to average
 	if len(bc.Chain) <= window {
 		return minDifficulty
 	}
@@ -127,12 +127,46 @@ type Blockchain struct {
 	Chain []Block `json:"chain"`
 }
 
+// BlockForHash - struct for calculating hash without the hash field
+type BlockForHash struct {
+	Index        int           `json:"index"`
+	Timestamp    string        `json:"timestamp"`
+	Transactions []Transaction `json:"transactions"`
+	PrevHash     string        `json:"prev_hash"`
+	Nonce        int           `json:"nonce"`
+}
+
 // calculateHash liczy SHA256 bloku (zawiera transakcje)
 func calculateHash(b Block) string {
-	txBytes, _ := json.Marshal(b.Transactions)
-	record := fmt.Sprintf("%d%s%s%s%d", b.Index, b.Timestamp, string(txBytes), b.PrevHash, b.Nonce)
-	sum := sha256.Sum256([]byte(record))
-	return hex.EncodeToString(sum[:])
+	// Use rx/owo PoW logic for hash calculation
+	blockForHash := BlockForHash{
+		Index:        b.Index,
+		Timestamp:    b.Timestamp,
+		Transactions: b.Transactions,
+		PrevHash:     b.PrevHash,
+		Nonce:        b.Nonce,
+	}
+	blockBytes, _ := json.Marshal(blockForHash)
+	memSize := 1024 * 1024 // 1MB buffer, must match mineBlock
+	mem := make([]byte, memSize)
+	// Deterministic memory buffer: seed with block index and prev hash
+	seed := sha256.Sum256([]byte(fmt.Sprintf("%d%s", b.Index, b.PrevHash)))
+	for i := 0; i < memSize; i++ {
+		mem[i] = seed[i%len(seed)]
+	}
+	acc := uint64(b.Nonce)
+	for i := 0; i < 8; i++ {
+		idx := (b.Nonce*31 + i*7919) % memSize
+		acc ^= uint64(mem[idx]) << (i * 8)
+	}
+	puzzle := (b.Nonce ^ len(blockBytes)) + int(acc&0xFFFF)
+	hashInput := append(blockBytes, mem[(b.Nonce*13)%memSize])
+	hashInput = append(hashInput, byte(puzzle&0xFF))
+	for i := 0; i < 8; i++ {
+		hashInput = append(hashInput, byte((acc>>(i*8))&0xFF))
+	}
+	h := sha3.Sum256(hashInput)
+	return hex.EncodeToString(h[:])
 }
 
 // createGenesisBlock - genesis
@@ -159,7 +193,7 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 	nonce := 0
 	memSize := 1024 * 1024 // 1MB buffer for GPU mining
 	mem := make([]byte, memSize)
-	crand.Read(mem)
+	// Deterministic memory buffer: seed with block index and prev hash
 	for {
 		b = Block{
 			Index:        prev.Index + 1,
@@ -168,7 +202,18 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 			PrevHash:     prev.Hash,
 			Nonce:        nonce,
 		}
-		blockBytes, _ := json.Marshal(b)
+		seed := sha256.Sum256([]byte(fmt.Sprintf("%d%s", b.Index, b.PrevHash)))
+		for i := 0; i < memSize; i++ {
+			mem[i] = seed[i%len(seed)]
+		}
+		blockForHash := BlockForHash{
+			Index:        b.Index,
+			Timestamp:    b.Timestamp,
+			Transactions: b.Transactions,
+			PrevHash:     b.PrevHash,
+			Nonce:        b.Nonce,
+		}
+		blockBytes, _ := json.Marshal(blockForHash)
 		// rx/owo: combine multiple random memory accesses
 		acc := uint64(nonce)
 		for i := 0; i < 8; i++ {
@@ -282,6 +327,10 @@ func (bc *Blockchain) LoadFromFile(path string) error {
 	// dodatkowa kontrola: jeśli pusty -> genesis
 	if len(tmp.Chain) == 0 {
 		tmp.Chain = []Block{createGenesisBlock()}
+	}
+	// Recalculate hashes to fix any inconsistencies from old hash calculation
+	for i := range tmp.Chain {
+		tmp.Chain[i].Hash = calculateHash(tmp.Chain[i])
 	}
 	bc.Chain = tmp.Chain
 	return nil

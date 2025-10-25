@@ -13,7 +13,7 @@ import (
 )
 
 const blockchainFile = "blockchain.json"
-const ver = "0.3.0"
+const ver = "0.3.1"
 
 const asciiLogo = `
 ⠀⠀⠀⠀⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
@@ -218,7 +218,7 @@ func main() {
 			fmt.Printf("Adding peer from -n flag: %s\n", nodeAddr)
 			pm.AddPeer(nodeAddr)
 		}
-		fmt.Printf("Daemon starting with %d peers\n", len(pm.GetPeers()))
+		fmt.Printf("\033[32mDaemon starting with %d peers\033[0m\n", len(pm.GetPeers()))
 		go startWebStatsServer(&bc, 6767)
 		runDaemon(*port, &bc, pm)
 		return

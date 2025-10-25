@@ -18,7 +18,7 @@ func startWebStatsServer(bc *Blockchain, port int) {
 		json.NewEncoder(w).Encode(stats)
 	})
 
-	fmt.Printf("Web stats server listening on :%d\n", port)
+	fmt.Printf("\033[32mWeb stats server listening on :%d\033[0m\n", port)
 	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 
 }
