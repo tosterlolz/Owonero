@@ -403,6 +403,7 @@ func main() {
 	daemon := flag.Bool("d", false, "run as daemon")
 	tui := flag.Bool("tui", false, "run wallet in TUI mode")
 	port := flag.Int("p", 6969, "daemon port")
+	webPort := flag.Int("web", 6767, "web stats server port")
 	walletPath := flag.String("w", "wallet.json", "wallet file path")
 	mine := flag.Bool("m", false, "mine blocks (uses -w wallet file)")
 	blocks := flag.Int("b", 0, "how many blocks to mine when mining (0 = mine forever)")
@@ -465,7 +466,7 @@ func main() {
 			pm.AddPeer(nodeAddr)
 		}
 		fmt.Printf("\033[32mDaemon starting with %d peers\033[0m\n", len(pm.GetPeers()))
-		go startWebStatsServer(&bc, 6767)
+		go startWebStatsServer(&bc, *webPort)
 		runDaemon(*port, &bc, pm)
 		return
 	}
