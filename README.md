@@ -52,16 +52,39 @@ cd Owonero/main
 
 ## Usage
 
-### Daemon Commands
 
-| Command | Description |
-|---------|-------------|
-| `getchain` | Get the full blockchain |
-| `getheight` | Get current blockchain height |
-| `submitblock` | Submit a mined block |
-| `getpeers` | Get list of known peers |
-| `addpeer` | Add a new peer |
-| `sync` | Force blockchain sync with peers |
+### Daemon TCP Commands
+
+| Command         | Description                                 |
+|-----------------|---------------------------------------------|
+| `getchain`      | Get the full blockchain (JSON)              |
+| `getheight`     | Get current blockchain height (int)         |
+| `submitblock`   | Submit a mined block (JSON payload)         |
+| `sendtx`        | Submit a signed transaction (JSON payload)  |
+| `getpeers`      | Get list of known peers (JSON array)        |
+| `addpeer`       | Add a new peer (address on next line)       |
+| `removepeer`    | Remove a peer (address on next line)        |
+| `getwallet`     | Get wallet info (address on next line)      |
+| `mineractive`   | Report active miner (address on next line)  |
+| `sync`          | Force blockchain sync with peers            |
+
+**Example:**
+
+```
+getchain
+{ ... blockchain JSON ... }
+
+sendtx
+{ ... transaction JSON ... }
+
+addpeer
+192.168.1.101:6969
+ok
+
+mineractive
+OWO1234567890ABCDEF
+ok
+```
 
 ### Command Line Flags
 
