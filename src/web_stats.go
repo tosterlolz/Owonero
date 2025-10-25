@@ -22,7 +22,7 @@ func startWebStatsServer(bc *Blockchain, port int) {
 		http.ServeFile(w, r, "index.html")
 	})
 
-	fmt.Printf("\033[32mWeb stats server listening on :%d\033[0m\n", port)
+	fmt.Printf("%sWeb stats server listening on :%d%s\n", Green, port, Reset)
 	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
 

@@ -51,17 +51,18 @@ Write-Host "=====================================" -ForegroundColor Cyan
 # Kill any running instances
 Write-Host "Stopping any running instances..." -ForegroundColor Yellow
 taskkill.exe /F /IM owonero-amd64.exe > $null 2>&1
-taskkill.exe /F /IM owonero > $null 2>&1
+taskkill.exe /F /IM owonero-x86.exe > $null 2>&1
+taskkill.exe /F /IM owonero-arm64.exe > $null 2>&1
 
 # Define build targets
 $targets = @(
     @{ OS = 'windows'; Arch = 'amd64'; BinaryName = 'owonero-amd64.exe' },
-    @{ OS = 'windows'; Arch = '386'; BinaryName = 'owonero-x86.exe' },
-    @{ OS = 'linux'; Arch = 'amd64'; BinaryName = 'owonero-amd64' },
-    @{ OS = 'linux'; Arch = '386'; BinaryName = 'owonero-x86' },
-    @{ OS = 'linux'; Arch = 'arm64'; BinaryName = 'owonero-arm64' }
-)
-
+    # @{ OS = 'windows'; Arch = '386'; BinaryName = 'owonero-x86.exe' },
+    # @{ OS = 'linux'; Arch = '386'; BinaryName = 'owonero-x86' },
+    # @{ OS = 'linux'; Arch = 'arm64'; BinaryName = 'owonero-arm64' }
+    @{ OS = 'linux'; Arch = 'amd64'; BinaryName = 'owonero-amd64' }
+    )
+    
 $buildResults = @()
 
 foreach ($target in $targets) {

@@ -37,6 +37,9 @@ func discoverPeers(nodeAddr string) ([]string, error) {
 // startMining kopie bloki i wysyła je do node
 // blocksToMine == 0 -> mine forever
 func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
+	// Maximize CPU usage for mining
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	w, err := loadOrCreateWallet(walletPath)
 	if err != nil {
 		return err
@@ -80,7 +83,7 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 	// shared state
 	var minedCount int64
 	var attempts int64
-	blockCh := make(chan Block, threads*2)
+	blockCh := make(chan Block, threads*4) // Increased buffer for better performance
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	var atomicHeadHash atomic.Value
@@ -114,7 +117,7 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 				}
 				resp = strings.TrimSpace(resp)
 				if resp == "ok" {
-					fmt.Printf("\033[32mBlock accepted! Index=%d Hash=%s\033[0m\n", b.Index, b.Hash)
+					fmt.Printf("%sBlock accepted! Index=%d Hash=%s%s\n", Green, b.Index, b.Hash, Reset)
 					atomicHeadHash.Store(b.Hash)
 					atomicHeadBlock.Store(b)
 				} else {
@@ -215,9 +218,10 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 	}()
 
 	// Use all available CPU cores if threads==0 or threads<1
+	// For maximum CPU utilization, use 2x CPU count (hyperthreading)
 	numThreads := threads
 	if numThreads < 1 {
-		numThreads = runtime.NumCPU()
+		numThreads = runtime.NumCPU() * 2 // Use hyperthreading
 	}
 	for i := 0; i < numThreads; i++ {
 		go func(id int) {
@@ -251,7 +255,8 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 				select {
 				case blockCh <- newBlock:
 				default:
-					time.Sleep(100 * time.Millisecond)
+					// Remove delay to maximize mining performance
+					// time.Sleep(100 * time.Millisecond)
 				}
 			}
 		}(i)

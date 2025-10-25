@@ -193,6 +193,28 @@ go test ./...
 go build -tags debug -o owonero-debug ./src
 ```
 
+## 🔄 Continuous Integration
+
+Owonero uses GitHub Actions for automated building and releasing. The CI/CD pipeline:
+
+- **Triggers**: On push to `master`/`main` branch and pull requests
+- **Platforms**: Windows (AMD64, i386), Linux (AMD64, i386, ARM64)
+- **Artifacts**: Binaries uploaded as workflow artifacts
+- **Releases**: Automatic GitHub releases with zipped binaries
+
+### Workflow Files
+- `.github/workflows/build.yml` - Main build workflow
+
+### Manual Release
+You can also trigger builds manually:
+1. Go to **Actions** tab in GitHub
+2. Select **Build Owonero** workflow
+3. Click **Run workflow**
+4. Optionally specify a custom version
+
+### Build Status
+[![Build Status](https://github.com/tosterlolz/Owonero/actions/workflows/build.yml/badge.svg)](https://github.com/tosterlolz/Owonero/actions/workflows/build.yml)
+
 ## 📊 Monitoring
 
 ### Web Stats Interface

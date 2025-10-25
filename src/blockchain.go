@@ -147,7 +147,7 @@ func calculateHash(b Block) string {
 		Nonce:        b.Nonce,
 	}
 	blockBytes, _ := json.Marshal(blockForHash)
-	memSize := 1024 * 1024 // 1MB buffer, must match mineBlock
+	memSize := 2 * 1024 * 1024 // 2MB - balanced for performance
 	mem := make([]byte, memSize)
 	// Deterministic memory buffer: seed with block index and prev hash
 	seed := sha256.Sum256([]byte(fmt.Sprintf("%d%s", b.Index, b.PrevHash)))
@@ -155,9 +155,15 @@ func calculateHash(b Block) string {
 		mem[i] = seed[i%len(seed)]
 	}
 	acc := uint64(b.Nonce)
-	for i := 0; i < 8; i++ {
-		idx := (b.Nonce*31 + i*7919) % memSize
-		acc ^= uint64(mem[idx]) << (i * 8)
+	baseIdx := b.Nonce * 31 % memSize
+	step := 7919 % memSize
+
+	for i := 0; i < 12; i++ {
+		idx := (baseIdx + i*step) % memSize
+		acc ^= uint64(mem[idx]) << ((i % 4) * 8)
+		if i%3 == 0 {
+			acc = (acc << 7) ^ (acc >> 11) ^ acc
+		}
 	}
 	puzzle := (b.Nonce ^ len(blockBytes)) + int(acc&0xFFFF)
 	hashInput := append(blockBytes, mem[(b.Nonce*13)%memSize])
@@ -165,6 +171,12 @@ func calculateHash(b Block) string {
 	for i := 0; i < 8; i++ {
 		hashInput = append(hashInput, byte((acc>>(i*8))&0xFF))
 	}
+	// CPU-intensive pre-processing
+	for j := 0; j < 4; j++ {
+		acc = (acc << 5) ^ (acc >> 3) ^ uint64(len(hashInput))
+	}
+	hashInput = append(hashInput, byte(acc&0xFF), byte((acc>>8)&0xFF))
+
 	h := sha3.Sum256(hashInput)
 	return hex.EncodeToString(h[:])
 }
@@ -191,7 +203,7 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 
 	var b Block
 	nonce := 0
-	memSize := 1024 * 1024 // 1MB buffer for GPU mining
+	memSize := 2 * 1024 * 1024 // Match mineBlock memory size
 	mem := make([]byte, memSize)
 
 	// Pre-calculate block data outside the loop
@@ -232,26 +244,36 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 		blockForHash.Nonce = nonce
 		blockBytes, _ := json.Marshal(blockForHash)
 
-		// rx/owo: optimized memory access pattern
+		// rx/owo: optimized memory access pattern with CPU intensity
 		acc := uint64(nonce)
-		// Pre-compute base index to reduce calculations
 		baseIdx := nonce * 31 % memSize
 		step := 7919 % memSize
 
-		for i := 0; i < 8; i++ {
+		// Balanced iterations for CPU utilization without sacrificing speed
+		for i := 0; i < 12; i++ { // Reduced from 16, increased from 8
 			idx := (baseIdx + i*step) % memSize
-			acc ^= uint64(mem[idx]) << (i * 8)
+			acc ^= uint64(mem[idx]) << ((i % 4) * 8) // More varied bit shifts
+			if i%3 == 0 {                            // Add some CPU intensity every few iterations
+				acc = (acc << 7) ^ (acc >> 11) ^ acc
+			}
 		}
 		puzzle := (nonce ^ len(blockBytes)) + int(acc&0xFFFF)
 
-		// Build hash input efficiently
+		// Build hash input efficiently with additional CPU work
 		hashInput = hashInput[:0] // reset length, keep capacity
 		hashInput = append(hashInput, blockBytes...)
 		hashInput = append(hashInput, mem[(nonce*13)%memSize])
 		hashInput = append(hashInput, byte(puzzle&0xFF))
-		// Add acc as 8 bytes (more efficient than byte-by-byte)
+		// Add acc as 8 bytes
 		hashInput = append(hashInput, byte(acc), byte(acc>>8), byte(acc>>16), byte(acc>>24),
 			byte(acc>>32), byte(acc>>40), byte(acc>>48), byte(acc>>56))
+
+		// Single hash round but with CPU-intensive pre-processing
+		// Add some extra CPU work before hashing
+		for j := 0; j < 4; j++ { // 4 rounds of CPU work
+			acc = (acc << 5) ^ (acc >> 3) ^ uint64(len(hashInput))
+		}
+		hashInput = append(hashInput, byte(acc&0xFF), byte((acc>>8)&0xFF))
 
 		h := sha3.Sum256(hashInput)
 
@@ -290,15 +312,15 @@ func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool 
 	if len(bc.Chain) == 0 {
 		// Genesis block validation
 		if b.Index != 0 {
-			fmt.Printf("Genesis block validation failed: Index must be 0, got %d\n", b.Index)
+			fmt.Printf("%sGenesis block validation failed: Index must be 0, got %d%s\n", Red, b.Index, Reset)
 			return false
 		}
 		if b.PrevHash != "" {
-			fmt.Printf("Genesis block validation failed: PrevHash must be empty, got %s\n", b.PrevHash)
+			fmt.Printf("%sGenesis block validation failed: PrevHash must be empty, got %s%s\n", Red, b.PrevHash, Reset)
 			return false
 		}
 		if calculateHash(b) != b.Hash {
-			fmt.Printf("Genesis block validation failed: Hash mismatch (calculated %s, stored %s)\n", calculateHash(b), b.Hash)
+			fmt.Printf("%sGenesis block validation failed: Hash mismatch (calculated %s, stored %s)%s\n", Red, calculateHash(b), b.Hash, Reset)
 			return false
 		}
 		return true
@@ -306,15 +328,15 @@ func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool 
 
 	last := bc.Chain[len(bc.Chain)-1]
 	if b.PrevHash != last.Hash {
-		fmt.Printf("Block %d validation failed: PrevHash mismatch (expected %s, got %s)\n", b.Index, last.Hash, b.PrevHash)
+		fmt.Printf("%sBlock %d validation failed: PrevHash mismatch (expected %s, got %s)%s\n", Red, b.Index, last.Hash, b.PrevHash, Reset)
 		return false
 	}
 	if calculateHash(b) != b.Hash {
-		fmt.Printf("Block %d validation failed: Hash mismatch (calculated %s, stored %s)\n", b.Index, calculateHash(b), b.Hash)
+		fmt.Printf("%sBlock %d validation failed: Hash mismatch (calculated %s, stored %s)%s\n", Red, calculateHash(b), b.Hash, Reset)
 		return false
 	}
 	if b.Index != last.Index+1 {
-		fmt.Printf("Block %d validation failed: Index mismatch (expected %d, got %d)\n", b.Index, last.Index+1, b.Index)
+		fmt.Printf("%sBlock %d validation failed: Index mismatch (expected %d, got %d)%s\n", Red, b.Index, last.Index+1, b.Index, Reset)
 		return false
 	}
 	if !skipPow {

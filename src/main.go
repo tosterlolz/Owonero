@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -21,7 +20,7 @@ import (
 )
 
 const blockchainFile = "blockchain.json"
-const ver = "0.3.5"
+const ver = "0.3.6"
 
 type GitHubRelease struct {
 	TagName string        `json:"tag_name"`
@@ -62,35 +61,35 @@ func checkForUpdates() {
 
 	resp, err := client.Get("https://api.github.com/repos/tosterlolz/Owonero/releases/latest")
 	if err != nil {
-		fmt.Printf("\033[33mFailed to check for updates: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to check for updates: %v%s\n", Yellow, err, Reset)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("\033[33mUpdate check failed: HTTP %d\033[0m\n", resp.StatusCode)
+		fmt.Printf("%sUpdate check failed: HTTP %d%s\n", Yellow, resp.StatusCode, Reset)
 		return
 	}
 
 	var release GitHubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		fmt.Printf("\033[33mFailed to parse update info: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to parse update info: %v%s\n", Yellow, err, Reset)
 		return
 	}
 
 	latestVer := strings.TrimPrefix(release.TagName, "v")
 	if latestVer == ver {
-		fmt.Printf("\033[32mYou are running the latest version (%s)\033[0m\n", ver)
+		fmt.Printf("%sYou are running the latest version (%s)%s\n", Green, ver, Reset)
 		return
 	}
 
 	// Check if latest version is actually newer
 	if isVersionNewer(latestVer, ver) {
-		fmt.Printf("\033[33mNew version available: %s (current: %s)\033[0m\n", latestVer, ver)
-		fmt.Printf("\033[36mDownloading update...\033[0m\n")
+		fmt.Printf("%sNew version available: %s (current: %s)%s\n", Yellow, latestVer, ver, Reset)
+		fmt.Printf("%sDownloading update...%s\n", Cyan, Reset)
 		downloadAndInstallUpdate(client, release)
 	} else {
-		fmt.Printf("\033[32mYou are running the latest version (%s)\033[0m\n", ver)
+		fmt.Printf("%sYou are running the latest version (%s)%s\n", Green, ver, Reset)
 	}
 }
 
@@ -135,34 +134,34 @@ func downloadAndInstallUpdate(client *http.Client, release GitHubRelease) {
 	}
 
 	if downloadURL == "" {
-		fmt.Printf("\033[31mNo suitable update found for %s/%s\033[0m\n", osName, arch)
+		fmt.Printf("%sNo suitable update found for %s/%s%s\n", Red, osName, arch, Reset)
 		return
 	}
 
 	// Download the update
 	resp, err := client.Get(downloadURL)
 	if err != nil {
-		fmt.Printf("\033[31mFailed to download update: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to download update: %v%s\n", Red, err, Reset)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("\033[31mDownload failed: HTTP %d\033[0m\n", resp.StatusCode)
+		fmt.Printf("%sDownload failed: HTTP %d%s\n", Red, resp.StatusCode, Reset)
 		return
 	}
 
 	// Get current executable path
 	execPath, err := os.Executable()
 	if err != nil {
-		fmt.Printf("\033[31mFailed to get executable path: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to get executable path: %v%s\n", Red, err, Reset)
 		return
 	}
 
 	// Create backup
 	backupPath := execPath + ".backup"
 	if err := os.Rename(execPath, backupPath); err != nil {
-		fmt.Printf("\033[31mFailed to create backup: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to create backup: %v%s\n", Red, err, Reset)
 		return
 	}
 
@@ -170,14 +169,14 @@ func downloadAndInstallUpdate(client *http.Client, release GitHubRelease) {
 	tempZipPath := execPath + ".tmp.zip"
 	out, err := os.Create(tempZipPath)
 	if err != nil {
-		fmt.Printf("\033[31mFailed to create temp zip file: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to create temp zip file: %v%s\n", Red, err, Reset)
 		os.Rename(backupPath, execPath) // restore
 		return
 	}
 	defer out.Close()
 
 	if _, err := io.Copy(out, resp.Body); err != nil {
-		fmt.Printf("\033[31mFailed to write update zip: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to write update zip: %v%s\n", Red, err, Reset)
 		os.Remove(tempZipPath)
 		os.Rename(backupPath, execPath) // restore
 		return
@@ -185,9 +184,9 @@ func downloadAndInstallUpdate(client *http.Client, release GitHubRelease) {
 	out.Close()
 
 	// Extract the zip file
-	fmt.Printf("\033[36mExtracting update...\033[0m\n")
+	fmt.Printf("%sExtracting update...%s\n", Cyan, Reset)
 	if err := extractZip(tempZipPath, filepath.Dir(execPath)); err != nil {
-		fmt.Printf("\033[31mFailed to extract update: %v\033[0m\n", err)
+		fmt.Printf("%sFailed to extract update: %v%s\n", Red, err, Reset)
 		os.Remove(tempZipPath)
 		os.Rename(backupPath, execPath) // restore
 		return
@@ -199,7 +198,7 @@ func downloadAndInstallUpdate(client *http.Client, release GitHubRelease) {
 	// Make executable on Unix
 	if osName != "windows" {
 		if err := os.Chmod(execPath, 0755); err != nil {
-			fmt.Printf("\033[31mFailed to make executable: %v\033[0m\n", err)
+			fmt.Printf("%sFailed to make executable: %v%s\n", Red, err, Reset)
 			os.Rename(backupPath, execPath) // restore
 			return
 		}
@@ -208,7 +207,7 @@ func downloadAndInstallUpdate(client *http.Client, release GitHubRelease) {
 	// Clean up backup
 	os.Remove(backupPath)
 
-	fmt.Printf("\033[32mUpdate installed successfully! Please restart the application.\033[0m\n")
+	fmt.Printf("%sUpdate installed successfully! Please restart the application.%s\n", Green, Reset)
 	os.Exit(0)
 }
 
@@ -285,6 +284,10 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 			dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
 			if bc.AddBlock(blk, dynDiff) {
 				_ = bc.SaveToFile(blockchainFile)
+				// Log who mined the block
+				if len(blk.Transactions) > 0 && blk.Transactions[0].From == "coinbase" {
+					fmt.Printf("%sBlock %d mined by %s%s\n", Green, blk.Index, blk.Transactions[0].To, Reset)
+				}
 				fmt.Fprintln(conn, "ok")
 			} else {
 				fmt.Fprintln(conn, "error: block invalid")
@@ -394,7 +397,8 @@ func main() {
 	var bc Blockchain
 	g, err := gradient.NewGradient("magenta", "pink")
 	if err != nil {
-		log.Fatalf("Failed to create gradient: %v", err)
+		fmt.Printf("%s%sFailed to create gradient: %v%s\n", Red, Bold, err, Reset)
+		os.Exit(1)
 	}
 	g.Print(fmt.Sprintf(asciiLogo, ver))
 
@@ -426,7 +430,7 @@ func main() {
 	if !*noUpdate {
 		checkForUpdates()
 	} else {
-		fmt.Printf("\033[33mUpdate check skipped (--no-update flag used)\033[0m\n")
+		fmt.Printf("%sUpdate check skipped (--no-update flag used)%s\n", Yellow, Reset)
 	}
 	if *tui {
 		wallet_main(nodeAddr)
@@ -441,7 +445,8 @@ func main() {
 
 	if !*noInit {
 		if err := bc.LoadFromFile(blockchainFile); err != nil {
-			log.Fatalf("Cannot init blockchain: %v", err)
+			fmt.Printf("%s%sCannot init blockchain: %v%s\n", Red, Bold, err, Reset)
+			os.Exit(1)
 		}
 		_ = bc.SaveToFile(blockchainFile)
 	} else {
@@ -466,12 +471,12 @@ func main() {
 			fmt.Printf("Adding peer from -n flag: %s\n", nodeAddr)
 			pm.AddPeer(nodeAddr)
 		}
-		fmt.Printf("\033[32mDaemon starting with %d peers\033[0m\n", len(pm.GetPeers()))
+		fmt.Printf("%sDaemon starting with %d peers%s\n", Green, len(pm.GetPeers()), Reset)
 		if *webPort > 0 {
 			go startWebStatsServer(&bc, *webPort)
-			fmt.Printf("\033[32mWeb stats server enabled on :%d\033[0m\n", *webPort)
+			fmt.Printf("%sWeb stats server enabled on :%d%s\n", Green, *webPort, Reset)
 		} else {
-			fmt.Printf("\033[33mWeb stats server disabled (use --web <port> to enable)\033[0m\n")
+			fmt.Printf("%sWeb stats server disabled (use --web <port> to enable)%s\n", Yellow, Reset)
 		}
 		runDaemon(*port, &bc, pm)
 		return
@@ -479,19 +484,22 @@ func main() {
 
 	if *mine {
 		if err := startMining(*walletPath, nodeAddr, *blocks, threads); err != nil {
-			log.Fatalf("Mining failed: %v", err)
+			fmt.Printf("%s%sMining failed: %v%s\n", Red, Bold, err, Reset)
+			os.Exit(1)
 		}
 		return
 	}
 
 	w, err := loadOrCreateWallet(*walletPath)
 	if err != nil {
-		log.Fatalf("Wallet error: %v", err)
+		fmt.Printf("%s%sWallet error: %v%s\n", Red, Bold, err, Reset)
+		os.Exit(1)
 	}
 	if err := bc.LoadFromFile(blockchainFile); err != nil {
-		log.Fatalf("Blockchain load error: %v", err)
+		fmt.Printf("%s%sBlockchain load error: %v%s\n", Red, Bold, err, Reset)
+		os.Exit(1)
 	}
-	fmt.Printf("\033[33mWallet:\033[0m \033[32m%s\033[0m\n", w.Address)
-	fmt.Printf("\033[33mBalance:\033[0m \033[32m%d\033[0m\n", getBalance(w, &bc))
-	fmt.Printf("\033[33mChain height:\033[0m \033[35m%d\033[0m\n", len(bc.Chain)-1)
+	fmt.Printf("%sWallet:%s %s%s%s\n", Yellow, Reset, Green, w.Address, Reset)
+	fmt.Printf("%sBalance:%s %s%d%s\n", Yellow, Reset, Green, getBalance(w, &bc), Reset)
+	fmt.Printf("%sChain height:%s %s%d%s\n", Yellow, Reset, Magenta, len(bc.Chain)-1, Reset)
 }
