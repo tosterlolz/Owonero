@@ -2,5 +2,3 @@ bin/
 go.sum
 *.json
 *.exe
-__pycache__/
-*.pyc

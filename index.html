@@ -286,7 +286,7 @@
     <script>
         async function fetchStats() {
             try {
-                const response = await fetch('https://owonero.yabai.buzz/stats');
+                const response = await fetch('https://owonero.yabai.buzz:6767/stats');
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
