@@ -4,8 +4,6 @@ go 1.25.0
 
 require github.com/iskaa02/qalam v0.3.0 // direct
 
-require golang.org/x/crypto v0.43.0
-
 require (
 	github.com/lucasb-eyer/go-colorful v1.0.3 // indirect
 	github.com/mazznoer/colorgrad v0.8.1 // indirect

@@ -256,7 +256,7 @@ func extractZip(zipPath, destDir string) error {
 	return nil
 }
 
-func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
+func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager, shares map[string]int64) {
 	defer conn.Close()
 	fmt.Fprintf(conn, "owonero-daemon height=%d\n", len(bc.Chain)-1)
 	scanner := bufio.NewScanner(conn)
@@ -281,8 +281,7 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 				fmt.Fprintln(conn, "error: cannot parse block json:", err)
 				continue
 			}
-			targetBlockTime := 30 // seconds per block, tune as needed
-			dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
+			dynDiff := bc.GetDynamicDifficulty()
 			if bc.AddBlock(blk, dynDiff) {
 				_ = bc.SaveToFile(blockchainFile)
 				fmt.Fprintln(conn, "ok")
@@ -383,10 +382,52 @@ func handleConn(conn net.Conn, bc *Blockchain, pm *PeerManager) {
 		case "sync":
 			syncWithPeers(pm, bc)
 			fmt.Fprintln(conn, "sync initiated")
+		case "submitshare":
+			if !scanner.Scan() {
+				fmt.Fprintln(conn, "error: expected share json on next line")
+				continue
+			}
+			var share struct {
+				Wallet   string `json:"wallet"`
+				Nonce    int    `json:"nonce"`
+				Attempts int64  `json:"attempts"`
+				Block    Block  `json:"block"`
+			}
+			if err := json.Unmarshal([]byte(scanner.Text()), &share); err != nil {
+				fmt.Fprintln(conn, "error: cannot parse share json:", err)
+				continue
+			}
+			// verify share: check if hash meets share diff
+			calculatedHash := calculateHash(share.Block)
+			dynDiff := bc.GetDynamicDifficulty()
+			shareDiff := dynDiff - 2
+			if shareDiff < 1 {
+				shareDiff = 1
+			}
+			if strings.HasPrefix(calculatedHash, strings.Repeat("0", shareDiff)) {
+				// valid share, record
+				shares[share.Wallet] += share.Attempts
+				fmt.Printf("Accepted share from %s: %d attempts (total shares: %d)\n", share.Wallet, share.Attempts, shares[share.Wallet])
+				fmt.Fprintln(conn, "ok")
+			} else {
+				fmt.Fprintln(conn, "error: invalid share")
+			}
 		default:
 			fmt.Fprintln(conn, "unknown command. supported: getchain, getheight, submitblock, sendtx, getpeers, addpeer, sync")
 		}
 	}
+}
+
+type Config struct {
+	NodeAddress     string   `json:"node_address"`
+	DaemonPort      int      `json:"daemon_port"`
+	WebPort         int      `json:"web_port"`
+	WalletPath      string   `json:"wallet_path"`
+	MiningThreads   int      `json:"mining_threads"`
+	Peers           []string `json:"peers"`
+	AutoUpdate      bool     `json:"auto_update"`
+	SyncOnStartup   bool     `json:"sync_on_startup"`
+	TargetBlockTime int      `json:"target_block_time"`
 }
 
 func main() {
@@ -398,25 +439,57 @@ func main() {
 	}
 	g.Print(fmt.Sprintf(asciiLogo, ver))
 
+	// Load config
+	var config Config
+	if data, err := os.ReadFile("config.json"); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			fmt.Printf("Warning: failed to parse config.json: %v\n", err)
+			config = Config{
+				NodeAddress:     "localhost:6969",
+				DaemonPort:      6969,
+				WebPort:         6767,
+				WalletPath:      "wallet.json",
+				MiningThreads:   1,
+				Peers:           []string{},
+				AutoUpdate:      true,
+				SyncOnStartup:   true,
+				TargetBlockTime: 30,
+			}
+		}
+	} else {
+		config = Config{
+			NodeAddress:     "localhost:6969",
+			DaemonPort:      6969,
+			WebPort:         6767,
+			WalletPath:      "wallet.json",
+			MiningThreads:   1,
+			Peers:           []string{},
+			AutoUpdate:      true,
+			SyncOnStartup:   true,
+			TargetBlockTime: 30,
+		}
+	}
+
 	// Parse flags early to check for no-update
-	noUpdate := flag.Bool("no-update", false, "skip automatic update check on startup")
+	noUpdate := flag.Bool("no-update", !config.AutoUpdate, "skip automatic update check on startup")
 	daemon := flag.Bool("d", false, "run as daemon")
 	tui := flag.Bool("tui", false, "run wallet in TUI mode")
-	port := flag.Int("p", 6969, "daemon port")
-	webPort := flag.Int("web", 6767, "web stats server port")
-	walletPath := flag.String("w", "wallet.json", "wallet file path")
+	port := flag.Int("p", config.DaemonPort, "daemon port")
+	webPort := flag.Int("web", config.WebPort, "web stats server port")
+	walletPath := flag.String("w", config.WalletPath, "wallet file path")
 	mine := flag.Bool("m", false, "mine blocks (uses -w wallet file)")
 	blocks := flag.Int("b", 0, "how many blocks to mine when mining (0 = mine forever)")
+	pool := flag.Bool("pool", false, "enable pool mining mode")
 	// Removed static mining difficulty flag
 
 	var nodeAddr string
-	flag.StringVar(&nodeAddr, "n", "localhost:6969", "node address host:port")
-	flag.StringVar(&nodeAddr, "node", "localhost:6969", "node address host:port")
+	flag.StringVar(&nodeAddr, "n", config.NodeAddress, "node address host:port")
+	flag.StringVar(&nodeAddr, "node", config.NodeAddress, "node address host:port")
 	var threads int
-	flag.IntVar(&threads, "t", 1, "number of mining threads")
-	flag.IntVar(&threads, "threads", 1, "number of mining threads")
+	flag.IntVar(&threads, "t", config.MiningThreads, "number of mining threads")
+	flag.IntVar(&threads, "threads", config.MiningThreads, "number of mining threads")
 	var peersStr string
-	flag.StringVar(&peersStr, "peers", "", "comma-separated list of peer addresses (host:port)")
+	flag.StringVar(&peersStr, "peers", strings.Join(config.Peers, ","), "comma-separated list of peer addresses (host:port)")
 	noInit := flag.Bool("no-init", false, "don't initialize blockchain.json, rely on syncing")
 
 	flag.Parse()
@@ -442,6 +515,7 @@ func main() {
 		if err := bc.LoadFromFile(blockchainFile); err != nil {
 			log.Fatalf("Cannot init blockchain: %v", err)
 		}
+		bc.TargetBlockTime = config.TargetBlockTime
 		_ = bc.SaveToFile(blockchainFile)
 	} else {
 		fmt.Println("Skipping blockchain initialization (--no-init flag used)")
@@ -476,12 +550,12 @@ func main() {
 		}
 		fmt.Printf("\033[32mDaemon starting with %d peers\033[0m\n", len(pm.GetPeers()))
 		go startWebStatsServer(&bc, *webPort)
-		runDaemon(*port, &bc, pm)
+		runDaemon(*port, &bc, pm, *pool)
 		return
 	}
 
 	if *mine {
-		if err := startMining(*walletPath, nodeAddr, *blocks, threads); err != nil {
+		if err := startMining(*walletPath, nodeAddr, *blocks, threads, *pool); err != nil {
 			log.Fatalf("Mining failed: %v", err)
 		}
 		return

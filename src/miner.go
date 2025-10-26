@@ -36,7 +36,7 @@ func discoverPeers(nodeAddr string) ([]string, error) {
 
 // startMining kopie bloki i wysyła je do node
 // blocksToMine == 0 -> mine forever
-func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
+func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bool) error {
 	w, err := loadOrCreateWallet(walletPath)
 	if err != nil {
 		return err
@@ -81,6 +81,12 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 	var minedCount int64
 	var attempts int64
 	blockCh := make(chan Block, threads*2)
+	shareCh := make(chan struct {
+		Wallet   string
+		Nonce    int
+		Attempts int64
+		Block    Block
+	}, threads*2)
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	var atomicHeadHash atomic.Value
@@ -148,6 +154,22 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 					close(done)
 					return
 				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	// share submitter
+	go func() {
+		for {
+			select {
+			case s := <-shareCh:
+				fmt.Fprintf(conn, "submitshare\n")
+				shareJSON, _ := json.Marshal(s)
+				fmt.Fprintf(conn, "%s\n", shareJSON)
+				resp, _ := reader.ReadString('\n')
+				_ = resp
 			case <-done:
 				return
 			}
@@ -230,8 +252,13 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 				prev := atomicHeadBlock.Load().(Block)
 
 				coinbase := Transaction{From: "coinbase", To: w.Address, Amount: 1}
-				targetBlockTime := 30 // seconds per block, tune as needed
-				dynDiff := chain.GetDynamicDifficulty(targetBlockTime)
+				dynDiff := chain.GetDynamicDifficulty()
+				if pool {
+					dynDiff -= 2
+					if dynDiff < 1 {
+						dynDiff = 1
+					}
+				}
 				newBlock := mineBlock(prev, []Transaction{coinbase}, dynDiff, &attempts)
 
 				// return if signalled to stop
@@ -247,11 +274,23 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int) error {
 					continue
 				}
 
-				// try send, but don't block forever
-				select {
-				case blockCh <- newBlock:
-				default:
-					time.Sleep(100 * time.Millisecond)
+				if pool {
+					select {
+					case shareCh <- struct {
+						Wallet   string
+						Nonce    int
+						Attempts int64
+						Block    Block
+					}{w.Address, newBlock.Nonce, atomic.LoadInt64(&attempts), newBlock}:
+					default:
+					}
+				} else {
+					// try send, but don't block forever
+					select {
+					case blockCh <- newBlock:
+					default:
+						time.Sleep(100 * time.Millisecond)
+					}
 				}
 			}
 		}(i)

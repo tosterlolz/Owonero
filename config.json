@@ -1,0 +1,11 @@
+{
+  "node_address": "owonero.yabai.buzz:6969",
+  "daemon_port": 6969,
+  "web_port": 6767,
+  "wallet_path": "wallet.json",
+  "mining_threads": 1,
+  "peers": [],
+  "auto_update": true,
+  "sync_on_startup": true,
+  "target_block_time": 30
+}

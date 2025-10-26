@@ -160,8 +160,7 @@ func syncWithPeer(peerAddr string, bc *Blockchain, pm *PeerManager) error {
 				continue
 			}
 
-			targetBlockTime := 30 // seconds per block, tune as needed
-			dynDiff := bc.GetDynamicDifficulty(targetBlockTime)
+			dynDiff := bc.GetDynamicDifficulty()
 			if bc.AddBlockSkipPow(block, dynDiff, true) { // skip PoW validation during sync
 				fmt.Printf("\033[32mSynced block %d from peer %s\033[0m\n", block.Index, peerAddr)
 				totalSynced++
@@ -219,7 +218,7 @@ func syncWithPeers(pm *PeerManager, bc *Blockchain) {
 	}
 }
 
-func runDaemon(port int, bc *Blockchain, pm *PeerManager) {
+func runDaemon(port int, bc *Blockchain, pm *PeerManager, pool bool) {
 	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
@@ -227,11 +226,12 @@ func runDaemon(port int, bc *Blockchain, pm *PeerManager) {
 	defer ln.Close()
 	fmt.Printf("\033[32mDaemon listening on :%d\033[0m  \033[33m(height=%d)\033[0m\n", port, len(bc.Chain)-1)
 
+	shares := make(map[string]int64)
+
 	// Initial sync with peers if any are configured
 	if len(pm.GetPeers()) > 0 {
 		fmt.Println("\033[36mPerforming initial sync with configured peers...\033[0m")
-		targetBlockTime := 30                        // seconds per block, tune as needed
-		_ = bc.GetDynamicDifficulty(targetBlockTime) // can be used for mining, not for sync here
+		_ = bc.GetDynamicDifficulty() // can be used for mining, not for sync here
 		syncWithPeers(pm, bc)
 	}
 
@@ -240,11 +240,43 @@ func runDaemon(port int, bc *Blockchain, pm *PeerManager) {
 		ticker := time.NewTicker(30 * time.Second) // sync every 30 seconds
 		defer ticker.Stop()
 		for range ticker.C {
-			targetBlockTime := 30 // seconds per block, tune as needed
-			_ = bc.GetDynamicDifficulty(targetBlockTime)
+			_ = bc.GetDynamicDifficulty()
 			syncWithPeers(pm, bc)
 		}
 	}()
+
+	if pool {
+		go func() {
+			for {
+				prev := bc.Chain[len(bc.Chain)-1]
+				var coinbase []Transaction
+				totalShares := int64(0)
+				for _, s := range shares {
+					totalShares += s
+				}
+				if totalShares > 0 {
+					fmt.Printf("Distributing rewards: total shares %d\n", totalShares)
+					for wallet, s := range shares {
+						amt := int(100 * s / totalShares)
+						if amt > 0 {
+							coinbase = append(coinbase, Transaction{From: "coinbase", To: wallet, Amount: amt})
+							fmt.Printf("Reward to %s: %d (shares: %d)\n", wallet, amt, s)
+						}
+					}
+					shares = make(map[string]int64) // clear after payout
+				} else {
+					coinbase = []Transaction{{From: "coinbase", To: "pool", Amount: 100}}
+				}
+				dynDiff := bc.GetDynamicDifficulty()
+				newBlock := mineBlock(prev, coinbase, dynDiff, nil)
+				if bc.AddBlock(newBlock, dynDiff) {
+					_ = bc.SaveToFile(blockchainFile)
+					fmt.Printf("Pool found block %d\n", newBlock.Index)
+				}
+				time.Sleep(1 * time.Second)
+			}
+		}()
+	}
 
 	for {
 		conn, err := ln.Accept()
@@ -252,6 +284,6 @@ func runDaemon(port int, bc *Blockchain, pm *PeerManager) {
 			log.Println("Accept error:", err)
 			continue
 		}
-		go handleConn(conn, bc, pm) // wywołanie goroutine, funkcja używana
+		go handleConn(conn, bc, pm, shares) // wywołanie goroutine, funkcja używana
 	}
 }

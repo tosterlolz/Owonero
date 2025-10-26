@@ -24,7 +24,7 @@ type Transaction struct {
 }
 
 // Dynamic difficulty adjustment
-func (bc *Blockchain) GetDynamicDifficulty(targetBlockTime int) int {
+func (bc *Blockchain) GetDynamicDifficulty() int {
 	minDifficulty := 1
 	maxDifficulty := 7 // Lower max difficulty for easier mining
 	window := 10       // Number of blocks to average
@@ -37,9 +37,9 @@ func (bc *Blockchain) GetDynamicDifficulty(targetBlockTime int) int {
 	tPrev, _ := time.Parse(time.RFC3339, prev.Timestamp)
 	avgBlockTime := int(tLatest.Sub(tPrev).Seconds()) / window
 	diff := bc.Chain[len(bc.Chain)-1].Difficulty // Use last block's difficulty
-	if avgBlockTime < targetBlockTime {
+	if avgBlockTime < bc.TargetBlockTime {
 		diff++
-	} else if avgBlockTime > targetBlockTime {
+	} else if avgBlockTime > bc.TargetBlockTime {
 		diff--
 	}
 	if diff < minDifficulty {
@@ -120,7 +120,8 @@ type Block struct {
 }
 
 type Blockchain struct {
-	Chain []Block `json:"chain"`
+	Chain           []Block `json:"chain"`
+	TargetBlockTime int     `json:"target_block_time"`
 }
 
 // BlockForHash - struct for calculating hash without the hash field
