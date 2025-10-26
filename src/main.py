@@ -5,6 +5,7 @@ Main entry point with command-line interface
 """
 
 import argparse
+import json
 import sys
 import os
 import asyncio
@@ -17,7 +18,7 @@ from utils import (
     RED, GREEN, YELLOW, BLUE, CYAN, MAGENTA, RESET, BOLD,
     VERSION, check_for_updates, BLOCKCHAIN_FILE
 )
-from blockchain import Blockchain
+from blockchain import Block, Blockchain
 from wallet import Wallet, load_or_create_wallet, get_balance
 from daemon import PeerManager, run_async_daemon, connect_to_peer_async
 from miner import start_async_mining
@@ -56,6 +57,7 @@ def print_ascii_logo():
 
 async def main():
     """Main entry point"""
+    USE_DEBUG: bool = False
     parser = argparse.ArgumentParser(
         description='Owonero - A lightweight blockchain cryptocurrency',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -74,6 +76,8 @@ Examples:
                        help='Run as network daemon')
     parser.add_argument('-tui', action='store_true',
                        help='Run wallet in Terminal User Interface mode')
+    parser.add_argument('--miner-tui', action='store_true',
+                       help='Run miner in Terminal User Interface mode (xmrig-style)')
     parser.add_argument('-p', '--port', type=int, default=6969,
                        help='Daemon listening port (default: 6969)')
     parser.add_argument('-web', type=int, default=0,
@@ -102,6 +106,8 @@ Examples:
                        help='Skip automatic update check on startup')
     parser.add_argument('--no-init', action='store_true',
                        help="Don't initialize blockchain.json, rely on syncing")
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug mode with verbose logging')
 
     args = parser.parse_args()
 
@@ -114,9 +120,16 @@ Examples:
     else:
         print_warning("Update check skipped (--no-update flag used)")
 
-    # Handle TUI mode
+    # Handle wallet TUI mode
     if args.tui:
         wallet_tui_main(args.node)
+        return
+
+    # Handle miner TUI mode
+    if args.miner_tui:
+        from miner_tui import run_miner_tui
+        # Use wallet/address, node, threads, blocks from args
+        await run_miner_tui(args.wallet, args.node, args.threads, args.blocks)
         return
 
     # Load or initialize blockchain
@@ -164,10 +177,32 @@ Examples:
                 await web_server.stop()
 
         return
-
+    
+    if args.debug:
+        USE_DEBUG: bool = True
+        
     # Handle mining mode
     if args.mine:
         print_info("Starting mining...")
+        # Sync blockchain if remote node is ahead
+        if args.node != 'localhost:6969':
+            try:
+                response = await connect_to_peer_async(args.node, "getheight")
+                if response:
+                    network_height = int(response)
+                    if network_height > blockchain.get_height():
+                        print_info(f"Syncing blockchain from remote node (height {network_height})...")
+                        chain_response = await connect_to_peer_async(args.node, "getchain")
+                        if chain_response:
+                            try:
+                                chain_data = json.loads(chain_response)
+                                blockchain.chain = [Block.from_dict(b) for b in chain_data]
+                                blockchain.save_to_file(BLOCKCHAIN_FILE)
+                                print_success(f"Blockchain synced (height: {blockchain.get_height()})")
+                            except Exception as e:
+                                print_error(f"Failed to sync blockchain: {e}")
+            except Exception as e:
+                print_warning(f"Could not sync blockchain: {e}")
         if not await start_async_mining(args.wallet, args.node, args.blocks, args.threads):
             print_error("Mining failed")
             sys.exit(1)

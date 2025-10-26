@@ -17,11 +17,6 @@ from utils import print_error, print_success, print_info, print_warning, save_js
 # Global debug flag, set by environment variable or argument
 DEBUG = '--debug' in sys.argv or os.environ.get('OWONERO_DEBUG', '0') == '1'
 
-def debug_print(msg):
-    if DEBUG:
-        print_info(msg)
-
-
 @dataclass
 class Transaction:
     """Represents a cryptocurrency transaction"""
@@ -96,7 +91,6 @@ class Blockchain:
         window = 10
 
         if len(self.chain) <= window:
-            debug_print(f"Difficulty: {min_difficulty} (not enough blocks for adjustment)")
             return min_difficulty
 
         latest = self.chain[-1]
@@ -106,9 +100,7 @@ class Blockchain:
             t_latest = time.mktime(time.strptime(latest.timestamp, "%Y-%m-%dT%H:%M:%SZ"))
             t_prev = time.mktime(time.strptime(prev.timestamp, "%Y-%m-%dT%H:%M:%SZ"))
             avg_block_time = int((t_latest - t_prev) / window)
-            debug_print(f"Average block time: {avg_block_time}s, Target: {target_block_time}s")
         except Exception as e:
-            debug_print(f"Difficulty fallback: {min_difficulty} due to error: {e}")
             return min_difficulty
 
         # Start from a sensible baseline difficulty (not block index).
@@ -123,7 +115,6 @@ class Blockchain:
             current_diff = max(min_difficulty, current_diff - 1)
 
         final_diff = max(min_difficulty, min(max_difficulty, current_diff))
-        debug_print(f"Dynamic difficulty set to: {final_diff}")
         return final_diff
 
     def validate_block(self, block: Block, difficulty: int, skip_pow: bool = False) -> bool:
@@ -165,7 +156,6 @@ class Blockchain:
         """Validate proof-of-work for a block hash (leading hex zeros)"""
         target_prefix = "0" * difficulty
         valid = block_hash.startswith(target_prefix)
-        debug_print(f"[DEBUG] PoW validation: hash={block_hash}, target_prefix={target_prefix}, valid={valid}")
         if difficulty <= 0 or len(block_hash) < difficulty:
             return True
         return valid
@@ -189,11 +179,9 @@ class Blockchain:
     def load_from_file(self, path: str) -> bool:
         """Load blockchain from JSON file"""
         data = load_json_file(path)
-        debug_print(f"[DEBUG] load_from_file: loading {path}, data is None: {data is None}")
         if data is None:
             # Create genesis block if file doesn't exist
             self.chain = [create_genesis_block()]
-            debug_print(f"[DEBUG] load_from_file: created genesis block, chain length: {len(self.chain)}")
             return self.save_to_file(path)
 
         try:
@@ -205,7 +193,6 @@ class Blockchain:
             else:
                 raise ValueError("Invalid blockchain data format")
 
-            debug_print(f"[DEBUG] load_from_file: block_data_list length: {len(block_data_list)}")
             self.chain = []
             for i, block_data in enumerate(block_data_list):
                 try:
@@ -217,7 +204,6 @@ class Blockchain:
 
             # Additional validation: ensure we have at least genesis
             if len(self.chain) == 0:
-                debug_print("[DEBUG] load_from_file: chain is empty after loading, creating genesis block")
                 self.chain = [create_genesis_block()]
 
             # Recalculate hashes to fix any inconsistencies
@@ -230,7 +216,6 @@ class Blockchain:
             import traceback
             traceback.print_exc()
             # If loading fails, create genesis block
-            debug_print("[DEBUG] load_from_file: exception during load, creating genesis block")
             self.chain = [create_genesis_block()]
             return self.save_to_file(path)
 
@@ -265,25 +250,26 @@ def calculate_hash(block: Block, mem: Optional[bytearray] = None) -> str:
         }
         block_bytes = json.dumps(block_for_hash, sort_keys=True, separators=(',', ':')).encode()
 
-        # Use block index and prev_hash as salt
-        salt = hashlib.sha3_256(f"{block.index}{block.prev_hash}".encode()).digest()
+        # Use block index, prev_hash, and timestamp as salt
+        salt_material = f"{block.index}{block.prev_hash}{block.timestamp}{block.nonce}".encode()
+        salt = hashlib.sha3_512(salt_material).digest()
 
-        # rx/owo PoW: memory-hard, random mixing, repeated rounds
-        rounds = 64
-        mem_size = 1024 * 32  # 32KB
+        # Enhanced rx/owo PoW: more memory, more rounds, more mixing
+        rounds = 256
+        mem_size = 1024 * 128  # 128KB
         mem = bytearray(mem_size)
-        seed = int.from_bytes(salt, 'big') ^ int.from_bytes(block_bytes[:32], 'big', signed=False)
+        seed = int.from_bytes(salt, 'big') ^ int.from_bytes(block_bytes[:64], 'big', signed=False)
         random.seed(seed)
         for i in range(mem_size):
             mem[i] = random.randint(0, 255)
-        h = hashlib.sha3_256(block_bytes + salt + mem).digest()
+        h = hashlib.sha3_512(block_bytes + salt + mem).digest()
         for r in range(rounds):
-            # Mix memory and hash
-            offset = (h[0] + r) % mem_size
-            for j in range(32):
-                mem[(offset + j) % mem_size] ^= h[j % len(h)]
-            h = hashlib.sha3_256(h + mem[offset:offset+32] + salt).digest()
-        final_hash = hashlib.sha3_256(h + mem).hexdigest()
+            # Mix memory and hash, use more entropy
+            offset = (h[r % len(h)] + r * 13) % mem_size
+            for j in range(64):
+                mem[(offset + j) % mem_size] ^= h[j % len(h)] ^ salt[j % len(salt)]
+            h = hashlib.sha3_512(h + mem[offset:offset+64] + salt + block_bytes[:32]).digest()
+        final_hash = hashlib.sha3_256(h + mem + salt + block_bytes).hexdigest()
         return final_hash
     except Exception as e:
         print_error(f"Hashing error: {e}")
@@ -333,9 +319,6 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
         block.hash = calculate_hash(block)
         attempts += 1
 
-        # Debug: print hash and target
-        debug_print(f"[DEBUG] Attempt {attempts}: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}") if (attempts <= 10 or attempts % 1000 == 0) else None
-
         # Periodically report progress to caller
         if progress_callback is not None and report_every > 0 and attempts % report_every == 0:
             try:
@@ -344,7 +327,6 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
                 pass
 
         if block.hash.startswith(target_prefix):
-            debug_print(f"[DEBUG] Found valid PoW: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
             if progress_callback is not None and report_every > 0 and attempts % report_every != 0:
                 try:
                     progress_callback(attempts % report_every)

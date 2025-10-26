@@ -398,7 +398,6 @@ async def connect_to_peer_async(peer_addr: str, command: str) -> Optional[str]:
 
             response_data = await reader.read(65536)
             response = response_data.decode().strip()
-            print_info(f"[DEBUG] connect_to_peer_async raw response from {peer_addr}: {repr(response)}")
             return response
 
         finally:
