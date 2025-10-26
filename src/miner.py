@@ -11,6 +11,7 @@ import os
 import json
 from typing import List
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils import print_error, print_success, print_info, print_warning
 from blockchain import Blockchain, Block, Transaction, mine_block
@@ -74,9 +75,14 @@ class AsyncMiner:
         print_success(f"Async mining stopped. Found {self.blocks_found} blocks, {self.total_attempts} total attempts")
 
     async def _mining_worker(self, task_id: int, max_blocks: int) -> None:
-        """Async mining worker task"""
+        """Async mining worker task with true multithreading for PoW"""
         blocks_found = 0
         attempts = 0
+        executor = ThreadPoolExecutor(max_workers=1)
+
+        def threaded_mine(prev_block, transactions, difficulty):
+            from blockchain import mine_block
+            return mine_block(prev_block, transactions, difficulty)
 
         while self.running:
             try:
@@ -93,7 +99,6 @@ class AsyncMiner:
                     json_data = lines[1]
                 else:
                     json_data = response.strip()
-                
                 try:
                     block_data = json.loads(json_data)
                     prev_block = Block.from_dict(block_data)
@@ -108,30 +113,25 @@ class AsyncMiner:
                     amount=50
                 )
                 transactions = [coinbase_tx]
-                # Use difficulty from previous block
                 blockchain = Blockchain()
                 blockchain.chain = [prev_block]
                 difficulty = blockchain.get_dynamic_difficulty()
-                
                 print_info(f"Task {task_id}: Mining block {prev_block.index + 1} (difficulty: {difficulty})")
 
-                
                 start_time = time.time()
-                block, block_attempts = mine_block(prev_block, transactions, difficulty)
+                # Run PoW in a real thread
+                block, block_attempts = await asyncio.get_event_loop().run_in_executor(
+                    executor, threaded_mine, prev_block, transactions, difficulty)
                 end_time = time.time()
-                
 
                 attempts += block_attempts
 
-                
                 submit_ok = await self._submit_block(block)
-                
                 if submit_ok:
                     blocks_found += 1
                     hashrate = block_attempts / (end_time - start_time)
                     print_success(f"Task {task_id}: Block {block.index} found! Hashrate: {hashrate:.1f} H/s")
                     if max_blocks > 0 and blocks_found >= max_blocks:
-                        
                         break
                 else:
                     print_warning(f"Task {task_id}: Block {block.index} rejected")
@@ -140,7 +140,6 @@ class AsyncMiner:
             except Exception as e:
                 print_error(f"[DEBUG] Async mining task {task_id} error: {e}")
                 await asyncio.sleep(2)
-    
         async with self.lock:
             self.total_attempts += attempts
             self.blocks_found += blocks_found
