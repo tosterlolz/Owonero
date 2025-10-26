@@ -6,11 +6,11 @@ Async peer-to-peer networking and block synchronization
 import asyncio
 import json
 import logging
-from typing import List, Set, Optional, Tuple
+from typing import List, Dict, Set, Optional, Tuple
 import random
 
 from utils import print_error, print_success, print_info, print_warning
-from blockchain import Blockchain, Block
+from blockchain import Blockchain, Block, Transaction, mine_block
 from wallet import Wallet, get_wallet_info
 
 # Set up logging for asyncio
@@ -114,7 +114,6 @@ class AsyncDaemon:
 
         try:
             buffer = ""
-
             while self.running:
                 try:
                     # Read data with timeout
@@ -130,6 +129,33 @@ class AsyncDaemon:
                         line = line.strip()
 
                         if line:
+                            # Special handling for submitblock
+                            if line.lower() == "submitblock":
+                                writer.write(b"Send block JSON on next line\n")
+                                await writer.drain()
+                                # Wait for block JSON
+                                block_json_line = None
+                                # If buffer already has a line, use it
+                                if '\n' in buffer:
+                                    block_json_line, buffer = buffer.split('\n', 1)
+                                    block_json_line = block_json_line.strip()
+                                else:
+                                    block_json_line = (await reader.readline()).decode().strip()
+                                try:
+                                    block_data = json.loads(block_json_line)
+                                    block = Block.from_dict(block_data)
+                                    difficulty = self.blockchain.get_dynamic_difficulty()
+                                    if self.blockchain.add_block(block, difficulty):
+                                        writer.write(b"ok\n")
+                                        await writer.drain()
+                                    else:
+                                        writer.write(b"error: block validation failed\n")
+                                        await writer.drain()
+                                except Exception as e:
+                                    writer.write(f"error: invalid block json {e}\n".encode())
+                                    await writer.drain()
+                                continue
+
                             response = await self._process_command(line)
                             writer.write(response.encode())
                             await writer.drain()
@@ -156,27 +182,30 @@ class AsyncDaemon:
             cmd = parts[0].lower()
 
             if cmd == "mineractive":
-                # Mark as active miner
                 print_info("Miner active")
                 return "ok\n"
 
             elif cmd == "getchain":
-                # Send entire blockchain
                 chain_data = [block.to_dict() for block in self.blockchain.chain]
                 response = json.dumps(chain_data) + "\n"
                 return response
 
+            elif cmd == "getlatestblock":
+                # Return only the latest block as JSON
+                if len(self.blockchain.chain) == 0:
+                    return "error: chain empty\n"
+                latest_block = self.blockchain.chain[-1]
+                response = json.dumps(latest_block.to_dict()) + "\n"
+                return response
+
             elif cmd == "getheight":
-                # Send current height
                 height = str(self.blockchain.get_height()) + "\n"
                 return height
 
             elif cmd == "submitblock":
-                # Expect block JSON on next line - handled in main loop
                 return "Send block JSON on next line\n"
 
             elif cmd == "sendtx":
-                # Expect transaction JSON on next line - handled in main loop
                 return "Send transaction JSON on next line\n"
 
             elif cmd == "getblocks":
@@ -234,7 +263,6 @@ class AsyncDaemon:
                     return "error: wallet not found\n"
 
             elif cmd == "sync":
-                # Trigger sync process
                 asyncio.create_task(self._sync_with_peers())
                 return "sync initiated\n"
 
@@ -365,29 +393,10 @@ async def connect_to_peer_async(peer_addr: str, command: str) -> Optional[str]:
             writer.write(f"{command}\n".encode())
             await writer.drain()
 
-            # Read response - handle multi-line responses
-            response_lines = []
-            while True:
-                line = await reader.readline()
-                if not line:
-                    break
-                line_str = line.decode().strip()
-                if not line_str:
-                    continue
-                response_lines.append(line_str)
-                
-                # Some commands might have a specific end marker
-                if command.lower() == "getheight" and len(response_lines) >= 2:
-                    break
-                elif len(response_lines) > 100:  # Safety limit
-                    break
-
-            # For getheight, return the last line (the actual height)
-            if command.lower() == "getheight" and response_lines:
-                return response_lines[-1]
-            
-            # For other commands, return all lines joined
-            return '\n'.join(response_lines)
+            response_data = await reader.read(65536)
+            response = response_data.decode().strip()
+            print_info(f"[DEBUG] connect_to_peer_async raw response from {peer_addr}: {repr(response)}")
+            return response
 
         finally:
             writer.close()

@@ -191,9 +191,11 @@ class Blockchain:
     def load_from_file(self, path: str) -> bool:
         """Load blockchain from JSON file"""
         data = load_json_file(path)
+        print_info(f"[DEBUG] load_from_file: loading {path}, data is None: {data is None}")
         if data is None:
             # Create genesis block if file doesn't exist
             self.chain = [create_genesis_block()]
+            print_info(f"[DEBUG] load_from_file: created genesis block, chain length: {len(self.chain)}")
             return self.save_to_file(path)
 
         try:
@@ -205,6 +207,7 @@ class Blockchain:
             else:
                 raise ValueError("Invalid blockchain data format")
 
+            print_info(f"[DEBUG] load_from_file: block_data_list length: {len(block_data_list)}")
             self.chain = []
             for i, block_data in enumerate(block_data_list):
                 try:
@@ -216,6 +219,7 @@ class Blockchain:
 
             # Additional validation: ensure we have at least genesis
             if len(self.chain) == 0:
+                print_warning("[DEBUG] load_from_file: chain is empty after loading, creating genesis block")
                 self.chain = [create_genesis_block()]
 
             # Recalculate hashes to fix any inconsistencies
@@ -227,7 +231,10 @@ class Blockchain:
             print_error(f"Failed to load blockchain: {e}")
             import traceback
             traceback.print_exc()
-            return False
+            # If loading fails, create genesis block
+            print_warning("[DEBUG] load_from_file: exception during load, creating genesis block")
+            self.chain = [create_genesis_block()]
+            return self.save_to_file(path)
 
     def get_height(self) -> int:
         """Get current blockchain height"""
