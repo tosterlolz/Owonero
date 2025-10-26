@@ -11,8 +11,15 @@ import secrets
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, asdict
 import struct
-
+import sys
 from utils import print_error, print_success, print_info, print_warning, save_json_file, load_json_file, format_timestamp
+
+# Global debug flag, set by environment variable or argument
+DEBUG = '--debug' in sys.argv or os.environ.get('OWONERO_DEBUG', '0') == '1'
+
+def debug_print(msg):
+    if DEBUG:
+        print_info(msg)
 
 
 @dataclass
@@ -89,7 +96,7 @@ class Blockchain:
         window = 10
 
         if len(self.chain) <= window:
-            print_info(f"Difficulty: {min_difficulty} (not enough blocks for adjustment)")
+            debug_print(f"Difficulty: {min_difficulty} (not enough blocks for adjustment)")
             return min_difficulty
 
         latest = self.chain[-1]
@@ -99,9 +106,9 @@ class Blockchain:
             t_latest = time.mktime(time.strptime(latest.timestamp, "%Y-%m-%dT%H:%M:%SZ"))
             t_prev = time.mktime(time.strptime(prev.timestamp, "%Y-%m-%dT%H:%M:%SZ"))
             avg_block_time = int((t_latest - t_prev) / window)
-            print_info(f"Average block time: {avg_block_time}s, Target: {target_block_time}s")
+            debug_print(f"Average block time: {avg_block_time}s, Target: {target_block_time}s")
         except Exception as e:
-            print_warning(f"Difficulty fallback: {min_difficulty} due to error: {e}")
+            debug_print(f"Difficulty fallback: {min_difficulty} due to error: {e}")
             return min_difficulty
 
         # Start from a sensible baseline difficulty (not block index).
@@ -116,7 +123,7 @@ class Blockchain:
             current_diff = max(min_difficulty, current_diff - 1)
 
         final_diff = max(min_difficulty, min(max_difficulty, current_diff))
-        print_info(f"Dynamic difficulty set to: {final_diff}")
+        debug_print(f"Dynamic difficulty set to: {final_diff}")
         return final_diff
 
     def validate_block(self, block: Block, difficulty: int, skip_pow: bool = False) -> bool:
@@ -158,7 +165,7 @@ class Blockchain:
         """Validate proof-of-work for a block hash (leading hex zeros)"""
         target_prefix = "0" * difficulty
         valid = block_hash.startswith(target_prefix)
-        print_info(f"[DEBUG] PoW validation: hash={block_hash}, target_prefix={target_prefix}, valid={valid}")
+        debug_print(f"[DEBUG] PoW validation: hash={block_hash}, target_prefix={target_prefix}, valid={valid}")
         if difficulty <= 0 or len(block_hash) < difficulty:
             return True
         return valid
@@ -182,11 +189,11 @@ class Blockchain:
     def load_from_file(self, path: str) -> bool:
         """Load blockchain from JSON file"""
         data = load_json_file(path)
-        print_info(f"[DEBUG] load_from_file: loading {path}, data is None: {data is None}")
+        debug_print(f"[DEBUG] load_from_file: loading {path}, data is None: {data is None}")
         if data is None:
             # Create genesis block if file doesn't exist
             self.chain = [create_genesis_block()]
-            print_info(f"[DEBUG] load_from_file: created genesis block, chain length: {len(self.chain)}")
+            debug_print(f"[DEBUG] load_from_file: created genesis block, chain length: {len(self.chain)}")
             return self.save_to_file(path)
 
         try:
@@ -198,7 +205,7 @@ class Blockchain:
             else:
                 raise ValueError("Invalid blockchain data format")
 
-            print_info(f"[DEBUG] load_from_file: block_data_list length: {len(block_data_list)}")
+            debug_print(f"[DEBUG] load_from_file: block_data_list length: {len(block_data_list)}")
             self.chain = []
             for i, block_data in enumerate(block_data_list):
                 try:
@@ -210,7 +217,7 @@ class Blockchain:
 
             # Additional validation: ensure we have at least genesis
             if len(self.chain) == 0:
-                print_warning("[DEBUG] load_from_file: chain is empty after loading, creating genesis block")
+                debug_print("[DEBUG] load_from_file: chain is empty after loading, creating genesis block")
                 self.chain = [create_genesis_block()]
 
             # Recalculate hashes to fix any inconsistencies
@@ -223,7 +230,7 @@ class Blockchain:
             import traceback
             traceback.print_exc()
             # If loading fails, create genesis block
-            print_warning("[DEBUG] load_from_file: exception during load, creating genesis block")
+            debug_print("[DEBUG] load_from_file: exception during load, creating genesis block")
             self.chain = [create_genesis_block()]
             return self.save_to_file(path)
 
@@ -323,8 +330,8 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
         attempts += 1
 
         # Debug: print hash and target
-        if attempts <= 10 or attempts % 1000 == 0:
-            print_info(f"[DEBUG] Attempt {attempts}: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
+        if DEBUG and (attempts <= 10 or attempts % 1000 == 0):
+            debug_print(f"[DEBUG] Attempt {attempts}: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
 
         # Periodically report progress to caller
         if progress_callback is not None and report_every > 0 and attempts % report_every == 0:
@@ -334,7 +341,8 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
                 pass
 
         if block.hash.startswith(target_prefix):
-            print_success(f"[DEBUG] Found valid PoW: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
+            if DEBUG:
+                print_success(f"[DEBUG] Found valid PoW: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
             if progress_callback is not None and report_every > 0 and attempts % report_every != 0:
                 try:
                     progress_callback(attempts % report_every)
