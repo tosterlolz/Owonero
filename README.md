@@ -4,6 +4,8 @@
 
 A lightweight, proof-of-work blockchain cryptocurrency written in Rust. Features automatic updates, peer-to-peer networking, and efficient mining with the RX/OWO memory-hard algorithm.
 
+IMPORTANT: Windows users — we publish release binaries on GitHub releases. If you are on Windows we recommend downloading the pre-built release for convenience and correctness.
+
 ## ✨ Features
 
 - **RX/OWO Mining Algorithm**: Advanced memory-hard proof-of-work based on RandomX principles, ASIC-resistant with 2MB scratchpad
