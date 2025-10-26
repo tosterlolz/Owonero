@@ -254,66 +254,43 @@ class Blockchain:
 
 
 def calculate_hash(block: Block, mem: Optional[bytearray] = None) -> str:
-    """Calculate SHA3-256 hash of a block using rx/owo algorithm.
+    """Calculate block hash using a modern memory-hard double SHA3-256 algorithm."""
+    import hashlib
+    import os
+    try:
+        # Serialize block data (exclude hash field)
+        block_for_hash = {
+            'index': block.index,
+            'timestamp': block.timestamp,
+            'transactions': [tx.to_dict() for tx in block.transactions],
+            'prev_hash': block.prev_hash,
+            'nonce': block.nonce
+        }
+        block_bytes = json.dumps(block_for_hash, sort_keys=True, separators=(',', ':')).encode()
 
-    If a precomputed `mem` buffer is provided it will be used instead of
-    rebuilding the 2MB memory buffer. This is a significant optimization
-    when hashing the same block multiple times with different nonces.
-    """
-
-    # Create block data for hashing (exclude the hash field itself)
-    block_for_hash = {
-        'index': block.index,
-        'timestamp': block.timestamp,
-        'transactions': [tx.to_dict() for tx in block.transactions],
-        'prev_hash': block.prev_hash,
-        'nonce': block.nonce
-    }
-
-    block_bytes = json.dumps(block_for_hash, sort_keys=True, separators=(',', ':')).encode()
-
-    # rx/owo memory-hard algorithm
-    mem_size = 2 * 1024 * 1024  # 2MB
-
-    # Use provided mem if available to avoid recomputing the 2MB buffer per-nonce
-    if mem is None:
+        # Memory-hard step: scrypt-like mixing
+        salt = hashlib.sha3_256(f"{block.index}{block.prev_hash}".encode()).digest()
+        # Use 128KB for speed (can increase for more hardness)
+        mem_size = 128 * 1024
         mem = bytearray(mem_size)
-        # Deterministic memory seeding
-        seed = hashlib.sha256(f"{block.index}{block.prev_hash}".encode()).digest()
+        for i in range(mem_size):
+            mem[i] = salt[i % len(salt)] ^ block_bytes[i % len(block_bytes)] ^ (block.nonce & 0xFF)
+
+        # Mix memory buffer
         for i in range(0, mem_size, 32):
-            end = min(i + 32, mem_size)
-            mem[i:end] = seed[:end-i]
+            chunk = mem[i:i+32]
+            mixed = hashlib.sha3_256(chunk).digest()
+            mem[i:i+32] = mixed
 
-    # CPU and memory intensive calculations
-    acc = block.nonce
-    base_idx = block.nonce * 31 % mem_size
-    step = 7919 % mem_size
-
-    for i in range(12):
-        idx = (base_idx + i * step) % mem_size
-        acc ^= mem[idx] << ((i % 4) * 8)
-        if i % 3 == 0:
-            acc = (acc << 7) ^ (acc >> 11) ^ acc
-
-    puzzle = (block.nonce ^ len(block_bytes)) + (acc & 0xFFFF)
-
-    # Build final hash input
-    hash_input = block_bytes
-    hash_input += mem[(block.nonce * 13) % mem_size].to_bytes(1, 'big')
-    hash_input += puzzle.to_bytes(2, 'big')
-
-    # Add acc as 8 bytes
-    hash_input += acc.to_bytes(8, 'big')
-
-    # Additional CPU work
-    for j in range(4):
-        acc = (acc << 5) ^ (acc >> 3) ^ len(hash_input)
-
-    hash_input += (acc & 0xFF).to_bytes(1, 'big')
-    hash_input += ((acc >> 8) & 0xFF).to_bytes(1, 'big')
-
-    # Final SHA3-256 hash
-    return hashlib.sha3_256(hash_input).hexdigest()
+        # Final hash input: block_bytes + last 64 bytes of mem
+        hash_input = block_bytes + mem[-64:]
+        # Double SHA3-256
+        h1 = hashlib.sha3_256(hash_input).digest()
+        h2 = hashlib.sha3_256(h1).hexdigest()
+        return h2
+    except Exception as e:
+        print_error(f"Hashing error: {e}")
+        return ""
 
 
 def create_genesis_block() -> Block:
@@ -351,23 +328,12 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
         nonce=0
     )
 
-    # Pre-calculate memory buffer once and reuse it for each nonce
-    mem_size = 2 * 1024 * 1024
-    mem = bytearray(mem_size)
-
-    seed = hashlib.sha256(f"{block.index}{block.prev_hash}".encode()).digest()
-    for i in range(0, mem_size, 32):
-        end = min(i + 32, mem_size)
-        mem[i:end] = seed[:end-i]
-
     attempts = 0
     nonce = 0
 
     while True:
         block.nonce = nonce
-
-        # Pass the precomputed mem buffer to avoid recomputing it per-nonce
-        block.hash = calculate_hash(block, mem=mem)
+        block.hash = calculate_hash(block)
         attempts += 1
 
         # Periodically report progress to caller
@@ -375,11 +341,9 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
             try:
                 progress_callback(report_every)
             except Exception:
-                # Don't let progress reporting break mining
                 pass
 
         if block.hash.startswith(target_prefix):
-            # Report any remaining attempts that haven't been reported yet
             if progress_callback is not None and report_every > 0 and attempts % report_every != 0:
                 try:
                     progress_callback(attempts % report_every)

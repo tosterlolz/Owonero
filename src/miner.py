@@ -82,30 +82,25 @@ class AsyncMiner:
             try:
                 print_info(f"[DEBUG] Mining worker {task_id} loop start. Fetching latest block from node...")
                 # Fetch latest block from node
-                response = await connect_to_peer_async(self.node_address, "getchain")
+                response = await connect_to_peer_async(self.node_address, "getlatestblock")
                 print_info(f"[DEBUG] Task {task_id}: Raw node response: {repr(response)}")
                 if not response:
-                    print_error(f"Task {task_id}: Failed to fetch chain from node.")
+                    print_error(f"Task {task_id}: Failed to fetch latest block from node.")
                     await asyncio.sleep(5)
                     continue
 
-                # Parse chain from node response
+                # Parse latest block from node response
                 lines = response.strip().split('\n')
                 if len(lines) >= 2:
                     json_data = lines[1]
                 else:
                     json_data = response.strip()
-                print_info(f"[DEBUG] Task {task_id}: JSON data for chain: {json_data}")
+                print_info(f"[DEBUG] Task {task_id}: JSON data for latest block: {json_data}")
                 try:
-                    chain_data = json.loads(json_data)
-                    print_info(f"[DEBUG] Task {task_id}: Parsed chain_data length: {len(chain_data) if chain_data else 0}")
-                    if not chain_data:
-                        print_error(f"Task {task_id}: Node chain is empty.")
-                        await asyncio.sleep(1)
-                        continue
-                    prev_block = Block.from_dict(chain_data[-1])
+                    block_data = json.loads(json_data)
+                    prev_block = Block.from_dict(block_data)
                 except Exception as e:
-                    print_error(f"Task {task_id}: Error parsing node chain: {e}")
+                    print_error(f"Task {task_id}: Error parsing latest block: {e}")
                     await asyncio.sleep(2)
                     continue
 
@@ -115,9 +110,9 @@ class AsyncMiner:
                     amount=50
                 )
                 transactions = [coinbase_tx]
-                # Use difficulty from node chain
+                # Use difficulty from previous block
                 blockchain = Blockchain()
-                blockchain.chain = [Block.from_dict(b) for b in chain_data]
+                blockchain.chain = [prev_block]
                 difficulty = blockchain.get_dynamic_difficulty()
                 print_info(f"[DEBUG] Difficulty for mining: {difficulty}")
                 print_info(f"Task {task_id}: Mining block {prev_block.index + 1} (difficulty: {difficulty})")
@@ -168,27 +163,24 @@ class AsyncMiner:
             pass
 
     async def _sync_blockchain(self, blockchain: Blockchain) -> bool:
-        """Sync blockchain from node asynchronously"""
+        """Sync only the latest block from node asynchronously"""
         try:
-            response = await connect_to_peer_async(self.node_address, "getchain")
+            response = await connect_to_peer_async(self.node_address, "getlatestblock")
             if not response:
                 return False
 
-            # Handle multi-line response from Go daemon (status line + JSON)
             lines = response.strip().split('\n')
             if len(lines) >= 2:
-                # Skip the status line and parse the JSON from the second line
                 json_data = lines[1]
             else:
-                # Fallback for single-line JSON response
                 json_data = response.strip()
 
-            chain_data = json.loads(json_data)
-            blockchain.chain = [Block.from_dict(block_data) for block_data in chain_data]
+            block_data = json.loads(json_data)
+            blockchain.chain = [Block.from_dict(block_data)]
             return True
 
         except Exception as e:
-            print_error(f"Failed to sync blockchain: {e}")
+            print_error(f"Failed to sync latest block: {e}")
             return False
 
     async def _submit_block(self, block: Block) -> bool:
