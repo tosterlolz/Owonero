@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-// Transaction reprezentuje prostą transakcję
 type Transaction struct {
 	From      string `json:"from"`
 	To        string `json:"to"`
@@ -37,7 +36,7 @@ func (bc *Blockchain) GetDynamicDifficulty(targetBlockTime int) int {
 	tLatest, _ := time.Parse(time.RFC3339, latest.Timestamp)
 	tPrev, _ := time.Parse(time.RFC3339, prev.Timestamp)
 	avgBlockTime := int(tLatest.Sub(tPrev).Seconds()) / window
-	diff := bc.Chain[len(bc.Chain)-1].Index // Use last block's difficulty if stored
+	diff := bc.Chain[len(bc.Chain)-1].Difficulty // Use last block's difficulty
 	if avgBlockTime < targetBlockTime {
 		diff++
 	} else if avgBlockTime > targetBlockTime {
@@ -52,7 +51,7 @@ func (bc *Blockchain) GetDynamicDifficulty(targetBlockTime int) int {
 	return diff
 }
 
-// SignTransaction - podpisuje transakcję kluczem prywatnym (ECDSA)
+// SignTransaction signs a transaction with ECDSA private key
 func SignTransaction(tx *Transaction, privPem string) error {
 	privBlock, _ := pem.Decode([]byte(privPem))
 	if privBlock == nil {
@@ -62,7 +61,6 @@ func SignTransaction(tx *Transaction, privPem string) error {
 	if err != nil {
 		return fmt.Errorf("nie można sparsować klucza prywatnego: %v", err)
 	}
-	// Hashujemy dane transakcji
 	msg := fmt.Sprintf("%s|%s|%d", tx.From, tx.To, tx.Amount)
 	hash := sha256.Sum256([]byte(msg))
 	r, s, err := ecdsa.Sign(crand.Reader, priv, hash[:])
@@ -77,7 +75,7 @@ func SignTransaction(tx *Transaction, privPem string) error {
 	return nil
 }
 
-// VerifyTransactionSignature - weryfikuje podpis transakcji
+// VerifyTransactionSignature verifies the transaction signature
 func VerifyTransactionSignature(tx *Transaction, pubPem string) bool {
 	pubBlock, _ := pem.Decode([]byte(pubPem))
 	if pubBlock == nil {
@@ -93,7 +91,6 @@ func VerifyTransactionSignature(tx *Transaction, pubPem string) bool {
 	}
 	msg := fmt.Sprintf("%s|%s|%d", tx.From, tx.To, tx.Amount)
 	hash := sha256.Sum256([]byte(msg))
-	// Dekoduj podpis
 	sigBytes, err := hex.DecodeString(tx.Signature)
 	if err != nil {
 		return false
@@ -112,7 +109,6 @@ func VerifyTransactionSignature(tx *Transaction, pubPem string) bool {
 	return ecdsa.Verify(pub, hash[:], r, s)
 }
 
-// Block struktura bloku
 type Block struct {
 	Index        int           `json:"index"`
 	Timestamp    string        `json:"timestamp"`
@@ -120,9 +116,9 @@ type Block struct {
 	PrevHash     string        `json:"prev_hash"`
 	Hash         string        `json:"hash"`
 	Nonce        int           `json:"nonce"`
+	Difficulty   int           `json:"difficulty"`
 }
 
-// Blockchain - łańcuch bloków
 type Blockchain struct {
 	Chain []Block `json:"chain"`
 }
@@ -136,7 +132,6 @@ type BlockForHash struct {
 	Nonce        int           `json:"nonce"`
 }
 
-// calculateHash liczy SHA256 bloku (zawiera transakcje)
 func calculateHash(b Block) string {
 	// Use rx/owo PoW logic for hash calculation
 	blockForHash := BlockForHash{
@@ -169,7 +164,6 @@ func calculateHash(b Block) string {
 	return hex.EncodeToString(h[:])
 }
 
-// createGenesisBlock - genesis
 func createGenesisBlock() Block {
 	g := Block{
 		Index:        0,
@@ -177,6 +171,7 @@ func createGenesisBlock() Block {
 		Transactions: []Transaction{{From: "genesis", To: "network", Amount: 0}},
 		PrevHash:     "",
 		Nonce:        0,
+		Difficulty:   1,
 	}
 	g.Hash = calculateHash(g)
 	return g
@@ -199,6 +194,7 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 	b.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	b.Transactions = txs
 	b.PrevHash = prev.Hash
+	b.Difficulty = difficulty
 
 	// Seed memory buffer once per block (optimized seeding)
 	seed := sha256.Sum256([]byte(fmt.Sprintf("%d%s", b.Index, b.PrevHash)))
@@ -285,7 +281,6 @@ func mineBlock(prev Block, txs []Transaction, difficulty int, attemptsPtr *int64
 	return b
 }
 
-// validateBlock - sprawdza poprawność: prevHash, hash, index, PoW (rx/owo)
 func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool {
 	if len(bc.Chain) == 0 {
 		// Genesis block validation
@@ -319,28 +314,29 @@ func (bc *Blockchain) validateBlock(b Block, difficulty int, skipPow bool) bool 
 	}
 	if !skipPow {
 		// check PoW: hash must start with difficulty zeros (optimized check)
-		if difficulty > 0 && len(b.Hash) >= difficulty {
-			hashBytes := []byte(b.Hash)
-			validPow := true
-			for i := 0; i < (difficulty+1)/2 && i < len(hashBytes)/2; i++ {
-				if difficulty > i*2 && hashBytes[i*2] != '0' {
-					validPow = false
-					break
-				}
-				if difficulty > i*2+1 && hashBytes[i*2+1] != '0' {
-					validPow = false
-					break
-				}
+		hashBytes, err := hex.DecodeString(b.Hash)
+		if err != nil {
+			return false
+		}
+		validPow := true
+		for i := 0; i < (difficulty+1)/2 && i < len(hashBytes); i++ {
+			byteVal := hashBytes[i]
+			if difficulty > i*2 && byteVal>>4 != 0 {
+				validPow = false
+				break
 			}
-			if !validPow {
-				return false
+			if difficulty > i*2+1 && (byteVal&0x0F) != 0 {
+				validPow = false
+				break
 			}
+		}
+		if !validPow {
+			return false
 		}
 	}
 	return true
 }
 
-// AddBlock - dodaje blok jeżeli walidacja przejdzie
 func (bc *Blockchain) AddBlock(b Block, difficulty int) bool {
 	return bc.AddBlockSkipPow(b, difficulty, false)
 }
@@ -354,7 +350,6 @@ func (bc *Blockchain) AddBlockSkipPow(b Block, difficulty int, skipPow bool) boo
 	return false
 }
 
-// SaveToFile - zapisuje blockchain do pliku JSON
 func (bc *Blockchain) SaveToFile(path string) error {
 	data, err := json.MarshalIndent(bc, "", "  ")
 	if err != nil {

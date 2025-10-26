@@ -447,6 +447,15 @@ func main() {
 		fmt.Println("Skipping blockchain initialization (--no-init flag used)")
 	}
 
+	// Sync with specified node if not default
+	if nodeAddr != "localhost:6969" {
+		pm := &PeerManager{}
+		pm.AddPeer(nodeAddr)
+		fmt.Println("Syncing blockchain with specified node...")
+		syncWithPeers(pm, &bc)
+		_ = bc.SaveToFile(blockchainFile)
+	}
+
 	if *daemon {
 		// Removed static daemonDifficulty assignment
 		pm := &PeerManager{}
