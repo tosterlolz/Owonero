@@ -1,4 +1,4 @@
-module github.com/tosterlolz/owonero/main
+module github.com/tosterlolz/owonero/owonero-go
 
 go 1.25.0
 

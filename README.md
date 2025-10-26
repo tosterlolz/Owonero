@@ -2,17 +2,18 @@
 
 ![banner](./assets/owe.png)
 
-A lightweight, proof-of-work blockchain cryptocurrency written in Go. Features automatic updates, peer-to-peer networking, and efficient mining with dynamic difficulty adjustment.
+A lightweight, proof-of-work blockchain cryptocurrency written in Rust. Features automatic updates, peer-to-peer networking, and efficient mining with the RX/OWO memory-hard algorithm.
 
 ## ✨ Features
 
-- **Proof-of-Work Mining**: Memory-hard mining algorithm with dynamic difficulty
+- **RX/OWO Mining Algorithm**: Advanced memory-hard proof-of-work based on RandomX principles, ASIC-resistant with 2MB scratchpad
 - **Peer-to-Peer Networking**: Decentralized network with automatic peer discovery
 - **Automatic Updates**: Self-updating from GitHub releases
-- **Wallet System**: Secure address generation and transaction management
+- **Wallet System**: Secure ECDSA address generation and transaction management
+- **Professional TUI**: Ratatui-based terminal interface for mining with real-time statistics
 - **Incremental Sync**: Efficient blockchain synchronization with chunked downloads
 - **Cross-Platform**: Windows, Linux, and macOS support
-- **TCP Protocol**: Simple, reliable network communication
+- **Async Architecture**: Tokio-based concurrent processing for optimal performance
 
 ## 📋 Minimum Requirements
 
@@ -24,7 +25,8 @@ A lightweight, proof-of-work blockchain cryptocurrency written in Go. Features a
 - **Network**: Stable internet connection for peer-to-peer communication
 
 ### Software Requirements
-- **Go**: Version 1.19 or later (for building from source)
+- **Rust**: Version 1.70 or later (for building from source)
+- **Cargo**: Rust package manager
 - **Git**: For cloning the repository
 - **GitHub CLI** (optional): For automated releases
 
@@ -52,9 +54,9 @@ git clone https://github.com/tosterlolz/Owonero.git
 cd Owonero
 
 # Build for your platform
-./build.ps1                    # Windows PowerShell
+cargo build --release                    # Release build
 # OR
-go build -o owonero ./src
+./build.ps1                              # Windows PowerShell build script
 ```
 
 ### 2. Start Your First Node
@@ -67,15 +69,42 @@ go build -o owonero ./src
 ./owonero -d -n owonero.yabai.buzz:6969 -p 6969
 ```
 
-### 3. Start Mining
+## 🔨 RX/OWO Mining Algorithm
+
+Owonero uses the **RX/OWO** algorithm, a custom memory-hard proof-of-work system inspired by RandomX. This algorithm is designed to be ASIC-resistant while remaining efficient on general-purpose CPUs.
+
+### Algorithm Features
+
+- **2MB Scratchpad**: Large memory requirement prevents ASIC optimization
+- **Complex Memory Access**: Pseudo-random memory reads/writes with multiple cache levels
+- **ASIC-Resistant Operations**: Bit rotations, multiplications, and non-linear arithmetic
+- **Dynamic Entropy**: Block data influences memory access patterns
+- **1024 Iterations**: Multiple computational rounds per hash
+
+### Mining Performance
+
+The algorithm scales well with:
+- **CPU Cores**: Linear scaling with thread count
+- **Memory Bandwidth**: Higher memory speed improves performance
+- **Cache Size**: Larger CPU caches provide better performance
+
+### Hardware Recommendations
+
+- **CPU**: Modern multi-core processor (4+ cores recommended)
+- **RAM**: 4GB+ system memory (mining uses ~2MB per thread)
+- **Cache**: CPUs with large L3 cache perform better
+
+### Mining Commands
 
 ```bash
-# Mine with 4 threads
-./owonero -m -n localhost:6969 -t 4 # SOLO
+# Solo mining with 8 threads
+./owonero --mine --node localhost:6969 --threads 8
 
-# Mine to remote node
-./owonero -m -n owonero.yabai.buzz:6969 -t 8 # SOLO
-./owonero -m --pool -n owonero.yabai.buzz:6969 -t 8 # POOL
+# Pool mining (if supported)
+./owonero --mine --pool --node pool.example.com:6969 --threads 8
+
+# Mining with TUI interface
+./owonero --mine --miner-ui --node localhost:6969 --threads 4
 ```
 
 ### 4. Check Your Wallet
@@ -158,41 +187,58 @@ ok
 ## 🛠️ Building from Source
 
 ### Prerequisites
-- Go 1.19+
+- Rust 1.70+
+- Cargo package manager
 - Git
 - PowerShell (Windows) or Bash (Linux/macOS)
 
 ### Build Commands
 
 ```bash
-# Windows (PowerShell)
-./build.ps1                    # Build for current platform
-./build.ps1 -Help             # Show help
+# Release build (optimized)
+cargo build --release
 
-# Linux/macOS
-go build -o owonero ./src     # Single platform build
+# Debug build
+cargo build
 
-# Cross-platform build
-GOOS=linux GOARCH=amd64 go build -o owonero-linux ./src
-GOOS=windows GOARCH=amd64 go build -o owonero-windows.exe ./src
+# Windows PowerShell script
+./build.ps1
+
+# Cross-platform builds
+cargo build --release --target x86_64-unknown-linux-gnu
+cargo build --release --target x86_64-pc-windows-gnu
+cargo build --release --target x86_64-apple-darwin
 ```
 
 ### Development Setup
 
 ```bash
-# Clone with submodules
-git clone --recursive https://github.com/tosterlolz/Owonero.git
-cd Owonero
+# Clone repository
+git clone https://github.com/tosterlolz/Owonero.git
+cd owonero-rs
 
 # Install dependencies
-go mod download
+cargo fetch
 
 # Run tests
-go test ./...
+cargo test
 
-# Build with debug info
-go build -tags debug -o owonero-debug ./src
+# Build with debug symbols
+cargo build
+
+# Run with debug output
+RUST_LOG=debug cargo run -- --help
 ```
+
+### Dependencies
+
+- **tokio**: Async runtime
+- **serde**: Serialization
+- **sha3**: Cryptographic hashing
+- **ring**: Cryptographic operations
+- **ratatui/crossterm**: Terminal UI
+- **clap**: Command line parsing
+- **anyhow**: Error handling
 
 ## 📊 Monitoring
 
@@ -276,19 +322,20 @@ We welcome contributions! Please follow these steps:
 
 ### Project Structure
 ```
-src/
-├── main.go           # CLI and main entry point
-├── daemon.go         # Network daemon and peer management
-├── miner.go          # Mining logic and thread management
-├── wallet.go         # Wallet creation and management
-├── wallet_tui.go     # Terminal user interface
-├── blockchain.go     # Core blockchain logic
-├── web_stats.go      # Web statistics interface
-└── go.mod           # Go module dependencies
-
-build.ps1            # Cross-platform build script
-README.md           # This file
-LICENSE             # MIT License
+owonero-rs/
+├── src/
+│   ├── main.rs           # CLI entry point and command routing
+│   ├── blockchain.rs     # RX/OWO algorithm and blockchain logic
+│   ├── miner.rs          # Async mining with thread management
+│   ├── miner_ui.rs       # Ratatui-based terminal interface
+│   ├── wallet.rs         # ECDSA wallet management
+│   ├── daemon.rs         # Async TCP server and peer management
+│   ├── config.rs         # JSON configuration management
+│   └── update.rs         # GitHub release checking
+├── Cargo.toml           # Rust dependencies and metadata
+├── build.ps1            # Cross-platform build script
+├── README.md           # This documentation
+└── LICENSE             # MIT License
 ```
 
 ## 📄 License

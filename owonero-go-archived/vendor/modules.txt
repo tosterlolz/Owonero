@@ -1,0 +1,13 @@
+# github.com/iskaa02/qalam v0.3.0
+## explicit; go 1.17
+github.com/iskaa02/qalam/gradient
+github.com/iskaa02/qalam/internal/styles
+# github.com/lucasb-eyer/go-colorful v1.0.3
+## explicit; go 1.12
+github.com/lucasb-eyer/go-colorful
+# github.com/mazznoer/colorgrad v0.8.1
+## explicit; go 1.12
+github.com/mazznoer/colorgrad
+# github.com/mazznoer/csscolorparser v0.1.0
+## explicit; go 1.15
+github.com/mazznoer/csscolorparser

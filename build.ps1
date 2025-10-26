@@ -1,188 +1,80 @@
-# Build Owonero for Windows and Linux
-# This script compiles the Go project for multiple platforms
+#!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+    Cross-compiles a Rust project for Windows and Linux AMD64.
+#>
 
-param(
-    [switch]$Release,
-    [switch]$Help,
-    [string]$Version
-)
+# Stop on errors
+$ErrorActionPreference = "Stop"
 
-# Show help if requested
-if ($Help) {
-    Write-Host "Owonero Build Script" -ForegroundColor Cyan
-    Write-Host "Usage: .\build.ps1 [-Release] [-Version <version>] [-Help]" -ForegroundColor White
-    Write-Host ""
-    Write-Host "Parameters:" -ForegroundColor Yellow
-    Write-Host "  -Release    Create GitHub release with zips" -ForegroundColor White
-    Write-Host "  -Version    Override version (default: read from main.go)" -ForegroundColor White
-    Write-Host "  -Help       Show this help message" -ForegroundColor White
-    Write-Host ""
-    Write-Host "Examples:" -ForegroundColor Yellow
-    Write-Host "  .\build.ps1                          # Build binaries only" -ForegroundColor White
-    Write-Host "  .\build.ps1 -Release                 # Build and create release" -ForegroundColor White
-    Write-Host "  .\build.ps1 -Release -Version 1.2.3  # Build with custom version" -ForegroundColor White
-    exit 0
-}
+Write-Host "=== Rust Cross-Compilation Script ===" -ForegroundColor Cyan
 
-# Stop on any error
-$ErrorActionPreference = 'Stop'
-
-# Ensure bin directory exists
-$binDir = Join-Path $PSScriptRoot 'bin'
-if (-not (Test-Path $binDir)) {
-    New-Item -ItemType Directory -Path $binDir | Out-Null
-}
-
-# Get version from source code or parameter
-if (-not $Version) {
-    $version = Select-String -Path 'src\main.go' -Pattern 'const ver = "([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value }
-    if (-not $version) {
-        Write-Error "Could not find version in main.go. Use -Version parameter to specify manually."
-        exit 1
-    }
+if ($IsLinux) {
+    Write-Host "Running on Linux host." -ForegroundColor Yellow
+} elseif ($IsWindows) {
+    Write-Host "Running on Windows host." -ForegroundColor Yellow
 } else {
-    $version = $Version
-    Write-Host "Using specified version: $version" -ForegroundColor Yellow
-}
-
-Write-Host "Building Owonero version $version" -ForegroundColor Cyan
-Write-Host "=====================================" -ForegroundColor Cyan
-
-# Kill any running instances
-Write-Host "Stopping any running instances..." -ForegroundColor Yellow
-taskkill.exe /F /IM owonero-amd64.exe > $null 2>&1
-taskkill.exe /F /IM owonero > $null 2>&1
-
-# Define build targets
-$targets = @(
-    @{ OS = 'windows'; Arch = 'amd64'; BinaryName = 'owonero-amd64.exe' },
-    @{ OS = 'windows'; Arch = '386'; BinaryName = 'owonero-x86.exe' },
-    @{ OS = 'linux'; Arch = 'amd64'; BinaryName = 'owonero-amd64' },
-    @{ OS = 'linux'; Arch = '386'; BinaryName = 'owonero-x86' },
-    @{ OS = 'linux'; Arch = 'arm64'; BinaryName = 'owonero-arm64' }
-)
-
-$buildResults = @()
-
-foreach ($target in $targets) {
-    Write-Host "Building for $($target.OS) ($($target.Arch))..." -ForegroundColor Green
-
-    $env:GOOS = $target.OS
-    $env:GOARCH = $target.Arch
-    $binaryPath = Join-Path $binDir $target.BinaryName
-
-    try {
-        go build -ldflags "-X main.version=$version" -o $binaryPath ./src
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "✓ Successfully built $($target.BinaryName)" -ForegroundColor Green
-            $buildResults += @{ Target = $target; Success = $true; Path = $binaryPath }
-        } else {
-            Write-Host "✗ Failed to build for $($target.OS)/$($target.Arch)" -ForegroundColor Red
-            $buildResults += @{ Target = $target; Success = $false; Path = $null }
-        }
-    } catch {
-        Write-Host "✗ Error building for $($target.OS)/$($target.Arch): $($_.Exception.Message)" -ForegroundColor Red
-        $buildResults += @{ Target = $target; Success = $false; Path = $null }
-    }
-}
-
-# Reset environment variables
-$env:GOOS = $null
-$env:GOARCH = $null
-
-# Show build summary
-$successfulBuilds = $buildResults | Where-Object { $_.Success }
-$failedBuilds = $buildResults | Where-Object { -not $_.Success }
-
-Write-Host ""
-Write-Host "Build Summary:" -ForegroundColor Cyan
-Write-Host "==============" -ForegroundColor Cyan
-Write-Host "Successful builds: $($successfulBuilds.Count)" -ForegroundColor Green
-Write-Host "Failed builds: $($failedBuilds.Count)" -ForegroundColor Red
-
-if ($failedBuilds.Count -gt 0) {
-    Write-Host ""
-    Write-Host "Failed targets:" -ForegroundColor Red
-    foreach ($failed in $failedBuilds) {
-        Write-Host "  - $($failed.Target.OS)/$($failed.Target.Arch)" -ForegroundColor Red
-    }
-}
-
-if ($successfulBuilds.Count -eq 0) {
-    Write-Error "No builds succeeded. Exiting."
+    Write-Error "Unsupported OS. This script only supports Windows and Linux hosts."
     exit 1
 }
 
-if ($Release) {
-    Write-Host ""
-    Write-Host "Creating GitHub release..." -ForegroundColor Yellow
-
-    # Check if gh CLI is available
-    try {
-        $null = gh --version
-    } catch {
-        Write-Error "GitHub CLI (gh) is not installed or not in PATH. Please install it from https://cli.github.com/"
-        exit 1
-    }
-
-    # Create zip archives for successful builds
-    $zipFiles = @()
-    foreach ($build in $successfulBuilds) {
-        $zipName = "owonero-$($build.Target.OS)-$($build.Target.Arch).zip"
-        $zipPath = Join-Path $binDir $zipName
-
-        Write-Host "Creating $zipName..." -ForegroundColor Yellow
-        try {
-            Compress-Archive -Path $build.Path -DestinationPath $zipPath -Force
-            $zipFiles += $zipPath
-            Write-Host "✓ Created $zipName" -ForegroundColor Green
-        } catch {
-            Write-Host "✗ Failed to create $zipName" -ForegroundColor Red
-        }
-    }
-
-    if ($zipFiles.Count -eq 0) {
-        Write-Error "No zip files created. Cannot create release."
-        exit 1
-    }
-
-    # Create GitHub release
-    $tagName = "v$version"
-    $releaseName = "Owonero $version"
-    $releaseNotes = @"
-Automated release of Owonero $version
-
-Built on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-
-Build targets:
-$(foreach ($build in $successfulBuilds) { "  - $($build.Target.OS)/$($build.Target.Arch)`n" })
-"@
-
-    # Check if release already exists
-    $existingRelease = gh release view $tagName 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Release $tagName already exists. Updating..." -ForegroundColor Yellow
-        gh release delete $tagName -y
-    }
-
-    # Create new release
-    gh release create $tagName --title $releaseName --notes $releaseNotes
-
-    # Upload assets
-    foreach ($zipFile in $zipFiles) {
-        $fileName = Split-Path $zipFile -Leaf
-        Write-Host "Uploading $fileName..." -ForegroundColor Yellow
-        gh release upload $tagName $zipFile --clobber
-        Write-Host "✓ Uploaded $fileName" -ForegroundColor Green
-    }
-
-    Write-Host ""
-    Write-Host "Release $tagName created and assets uploaded successfully!" -ForegroundColor Green
-    Write-Host "View release at: https://github.com/tosterlolz/Owonero/releases/tag/$tagName" -ForegroundColor Cyan
-} else {
-    Write-Host ""
-    Write-Host "Skipping release creation. Use -Release flag to create GitHub release." -ForegroundColor Yellow
+# Add required targets
+$targets = @("x86_64-pc-windows-gnu", "x86_64-unknown-linux-gnu")
+foreach ($target in $targets) {
+    Write-Host "Adding Rust target: $target"
+    rustup target add $target | Out-Null
 }
 
-Write-Host ""
-Write-Host "Build completed!" -ForegroundColor Cyan
+# Install toolchains if needed
+if ($IsLinux) {
+    Write-Host "Running on Linux host — installing cross-linkers for Windows target..." -ForegroundColor Yellow
+    sudo apt update
+    sudo apt install -y mingw-w64 gcc-multilib
+} elseif ($IsWindows) {
+    Write-Host "Running on Windows host." -ForegroundColor Yellow
+    # For building the Linux target from native Windows we prefer WSL or Docker.
+    $wsl = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wsl) {
+        Write-Host "WSL not found. To build the Linux target from Windows please either: (1) install WSL and Rust inside it, or (2) use Docker or a Linux host." -ForegroundColor Yellow
+        Write-Host "This script will still try to build the Windows target locally, but will skip the Linux target unless WSL is available." -ForegroundColor Yellow
+    } else {
+        Write-Host "WSL detected. Will build Linux target inside WSL." -ForegroundColor Green
+    }
+} else {
+    Write-Host "Unknown host OS. Proceeding with target addition only." -ForegroundColor Yellow
+}
+
+# Build for both targets
+Write-Host "Building Rust project for both targets..." -ForegroundColor Cyan
+foreach ($target in $targets) {
+    Write-Host "`n➡ Building for $target..." -ForegroundColor Green
+
+    if ($IsWindows -and $target -like "*unknown-linux-gnu") {
+        # On native Windows, build the Linux target inside WSL if available
+        $wsl = Get-Command wsl -ErrorAction SilentlyContinue
+        if ($wsl) {
+            Write-Host "Building Linux target inside WSL..." -ForegroundColor Cyan
+            # Check for rustup/cargo inside WSL and run build there. If missing, print instructions.
+            $wsl_cmd = "if ! command -v rustup >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then echo '__RUST_MISSING__'; else rustup target add $target || true; cargo build --release --target $target; fi"
+            $wsl_output = wsl -e bash -lc $wsl_cmd 2>&1
+            if ($wsl_output -match "__RUST_MISSING__") {
+                Write-Host "Rust (rustup/cargo) was not found inside WSL. To build the Linux target inside WSL, install Rust in your WSL distro and re-run this script." -ForegroundColor Yellow
+                Write-Host "Quick install inside WSL (run inside WSL):" -ForegroundColor Cyan
+                Write-Host "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y" -ForegroundColor Green
+                Write-Host "Then reopen the shell or source your profile and re-run this script from Windows (it will invoke WSL to build)." -ForegroundColor Yellow
+            } else {
+                Write-Host $wsl_output
+            }
+        } else {
+            Write-Host "Skipping Linux target build because WSL is not available. Install WSL or run this script from a Linux host." -ForegroundColor Yellow
+        }
+    } else {
+        # Native build (works on Linux or Windows for Windows-gnu target if proper linker is installed)
+        cargo build --release --target $target
+    }
+}
+
+# Output results
+Write-Host "`n✅ Build complete!" -ForegroundColor Cyan
+Write-Host "Windows binary: target/x86_64-pc-windows-gnu/release/owonero-rs.exe"
+Write-Host "Linux binary:   target/x86_64-unknown-linux-gnu/release/owonero-rs"

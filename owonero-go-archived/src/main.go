@@ -260,6 +260,7 @@ func main() {
 	noUpdate := flag.Bool("no-update", !config.AutoUpdate, "skip automatic update check on startup")
 	daemon := flag.Bool("d", false, "run as daemon")
 	tui := flag.Bool("tui", false, "run wallet in TUI mode")
+	minerUI := flag.Bool("miner-ui", false, "show miner TUI during mining")
 	port := flag.Int("p", config.DaemonPort, "daemon port")
 	webPort := flag.Int("web", config.WebPort, "web stats server port")
 	walletPath := flag.String("w", config.WalletPath, "wallet file path")
@@ -343,8 +344,19 @@ func main() {
 	}
 
 	if *mine {
-		if err := startMining(*walletPath, nodeAddr, *blocks, threads, *pool, *intensity); err != nil {
-			log.Fatalf("Mining failed: %v", err)
+		if *minerUI {
+			statsCh := make(chan MinerStats, 1)
+			doneUI := make(chan struct{})
+			go RunMinerUI(statsCh, doneUI)
+			if err := startMining(*walletPath, nodeAddr, *blocks, threads, *pool, *intensity, statsCh); err != nil {
+				close(doneUI)
+				log.Fatalf("Mining failed: %v", err)
+			}
+			close(doneUI)
+		} else {
+			if err := startMining(*walletPath, nodeAddr, *blocks, threads, *pool, *intensity, nil); err != nil {
+				log.Fatalf("Mining failed: %v", err)
+			}
 		}
 		return
 	}

@@ -3,3 +3,5 @@ go.sum
 blockchain.json
 wallet.json
 *.exe
+experimental/
+target/

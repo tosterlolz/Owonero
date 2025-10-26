@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+// MinerStats contains aggregated statistics produced by miners and consumed by a UI
+type MinerStats struct {
+	TotalHps int64
+	Sols     int64
+	AvgMin   float64
+	AvgHour  float64
+	AvgDay   float64
+	Threads  int
+	Mined    int64
+	Attempts int64
+}
+
 // discoverPeers connects to a node and gets its peer list
 func discoverPeers(nodeAddr string) ([]string, error) {
 	conn, err := net.Dial("tcp", nodeAddr)
@@ -36,7 +48,7 @@ func discoverPeers(nodeAddr string) ([]string, error) {
 
 // startMining kopie bloki i wysyła je do node
 // blocksToMine == 0 -> mine forever
-func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bool, intensity int) error {
+func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bool, intensity int, statsCh chan<- MinerStats) error {
 	w, err := loadOrCreateWallet(walletPath)
 	if err != nil {
 		return err
@@ -93,6 +105,12 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bo
 	atomicHeadHash.Store(lastBlock.Hash)
 	var atomicHeadBlock atomic.Value
 	atomicHeadBlock.Store(lastBlock)
+
+	// determine number of worker threads early so UI/stats can show it
+	numThreads := threads
+	if numThreads < 1 {
+		numThreads = runtime.NumCPU()
+	}
 
 	// submitter: single goroutine that sends blocks to node and updates lastBlock
 	go func() {
@@ -214,33 +232,37 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bo
 				avgMin := float64(attemptsMinute) / 60.0
 				avgHour := float64(attemptsHour) / 3600.0
 				avgDay := float64(attemptsDay) / 86400.0
-				// human-friendly formatting
-				hfmt := fmt.Sprintf("%d", h)
-				if h >= 1000 {
-					hfmt = fmt.Sprintf("%.2fk", float64(h)/1000.0)
+
+				if statsCh != nil {
+					// send latest stats to UI (non-blocking)
+					select {
+					case statsCh <- MinerStats{TotalHps: h, Sols: sols, AvgMin: avgMin, AvgHour: avgHour, AvgDay: avgDay, Threads: numThreads, Mined: mined, Attempts: h}:
+					default:
+					}
+				} else {
+					// human-friendly formatting
+					hfmt := fmt.Sprintf("%d", h)
+					if h >= 1000 {
+						hfmt = fmt.Sprintf("%.2fk", float64(h)/1000.0)
+					}
+					minFmt := fmt.Sprintf("%.0f", avgMin)
+					hourFmt := fmt.Sprintf("%.0f", avgHour)
+					dayFmt := fmt.Sprintf("%.0f", avgDay)
+					if avgMin >= 1000 {
+						minFmt = fmt.Sprintf("%.2fk", avgMin/1000.0)
+					}
+					if avgHour >= 1000 {
+						hourFmt = fmt.Sprintf("%.2fk", avgHour/1000.0)
+					}
+					if avgDay >= 1000 {
+						dayFmt = fmt.Sprintf("%.2fk", avgDay/1000.0)
+					}
+					fmt.Printf("H/s: %s    SOL/s: %d    Avg/min: %s    Avg/hr: %s    Avg/day: %s\n", hfmt, sols, minFmt, hourFmt, dayFmt)
 				}
-				minFmt := fmt.Sprintf("%.0f", avgMin)
-				hourFmt := fmt.Sprintf("%.0f", avgHour)
-				dayFmt := fmt.Sprintf("%.0f", avgDay)
-				if avgMin >= 1000 {
-					minFmt = fmt.Sprintf("%.2fk", avgMin/1000.0)
-				}
-				if avgHour >= 1000 {
-					hourFmt = fmt.Sprintf("%.2fk", avgHour/1000.0)
-				}
-				if avgDay >= 1000 {
-					dayFmt = fmt.Sprintf("%.2fk", avgDay/1000.0)
-				}
-				fmt.Printf("H/s: %s    SOL/s: %d    Avg/min: %s    Avg/hr: %s    Avg/day: %s\n", hfmt, sols, minFmt, hourFmt, dayFmt)
 			}
 		}
 	}()
 
-	// Use all available CPU cores if threads==0 or threads<1
-	numThreads := threads
-	if numThreads < 1 {
-		numThreads = runtime.NumCPU()
-	}
 	for i := 0; i < numThreads; i++ {
 		go func(id int) {
 			for {
