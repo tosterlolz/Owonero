@@ -155,22 +155,13 @@ class Blockchain:
         return True
 
     def _validate_pow(self, block_hash: str, difficulty: int) -> bool:
-        """Validate proof-of-work for a block hash"""
+        """Validate proof-of-work for a block hash (leading hex zeros)"""
+        target_prefix = "0" * difficulty
+        valid = block_hash.startswith(target_prefix)
+        print_info(f"[DEBUG] PoW validation: hash={block_hash}, target_prefix={target_prefix}, valid={valid}")
         if difficulty <= 0 or len(block_hash) < difficulty:
             return True
-
-        try:
-            hash_bytes = bytes.fromhex(block_hash)
-        except:
-            return False
-
-        # Check if hash starts with required number of zeros
-        for i in range((difficulty + 1) // 2):
-            if difficulty > i * 2 and hash_bytes[i] != 0:
-                return False
-            if difficulty > i * 2 + 1 and (hash_bytes[i] & 0x0F) != 0:
-                return False
-        return True
+        return valid
 
     def add_block(self, block: Block, difficulty: int) -> bool:
         """Add a block to the chain if validation passes"""
@@ -254,9 +245,8 @@ class Blockchain:
 
 
 def calculate_hash(block: Block, mem: Optional[bytearray] = None) -> str:
-    """Calculate block hash using a modern memory-hard double SHA3-256 algorithm."""
+    """Calculate block hash using scrypt for memory-hard PoW, then SHA3-256."""
     import hashlib
-    import os
     try:
         # Serialize block data (exclude hash field)
         block_for_hash = {
@@ -268,26 +258,22 @@ def calculate_hash(block: Block, mem: Optional[bytearray] = None) -> str:
         }
         block_bytes = json.dumps(block_for_hash, sort_keys=True, separators=(',', ':')).encode()
 
-        # Memory-hard step: scrypt-like mixing
+        # Use block index and prev_hash as salt
         salt = hashlib.sha3_256(f"{block.index}{block.prev_hash}".encode()).digest()
-        # Use 128KB for speed (can increase for more hardness)
-        mem_size = 128 * 1024
-        mem = bytearray(mem_size)
-        for i in range(mem_size):
-            mem[i] = salt[i % len(salt)] ^ block_bytes[i % len(block_bytes)] ^ (block.nonce & 0xFF)
 
-        # Mix memory buffer
-        for i in range(0, mem_size, 32):
-            chunk = mem[i:i+32]
-            mixed = hashlib.sha3_256(chunk).digest()
-            mem[i:i+32] = mixed
+        # Scrypt full KDF: N=2^14, r=8, p=1, key length=32
+        scrypt_hash = hashlib.scrypt(
+            password=block_bytes,
+            salt=salt,
+            n=16384,
+            r=8,
+            p=1,
+            dklen=32
+        )
 
-        # Final hash input: block_bytes + last 64 bytes of mem
-        hash_input = block_bytes + mem[-64:]
-        # Double SHA3-256
-        h1 = hashlib.sha3_256(hash_input).digest()
-        h2 = hashlib.sha3_256(h1).hexdigest()
-        return h2
+        # Final hash: SHA3-256 of scrypt output
+        final_hash = hashlib.sha3_256(scrypt_hash).hexdigest()
+        return final_hash
     except Exception as e:
         print_error(f"Hashing error: {e}")
         return ""
@@ -336,6 +322,10 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
         block.hash = calculate_hash(block)
         attempts += 1
 
+        # Debug: print hash and target
+        if attempts <= 10 or attempts % 1000 == 0:
+            print_info(f"[DEBUG] Attempt {attempts}: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
+
         # Periodically report progress to caller
         if progress_callback is not None and report_every > 0 and attempts % report_every == 0:
             try:
@@ -344,6 +334,7 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
                 pass
 
         if block.hash.startswith(target_prefix):
+            print_success(f"[DEBUG] Found valid PoW: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
             if progress_callback is not None and report_every > 0 and attempts % report_every != 0:
                 try:
                     progress_callback(attempts % report_every)
