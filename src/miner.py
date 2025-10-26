@@ -7,6 +7,7 @@ import asyncio
 import time
 import signal
 import sys
+import argparse
 import sys
 import os
 from utils import print_info
@@ -16,8 +17,21 @@ from typing import List, Optional, Callable, Tuple
 import os
 
 from utils import print_error, print_success, print_info, print_warning, BLOCKCHAIN_FILE
-from blockchain import Blockchain, Block, Transaction, mine_block, debug_print
+from blockchain import Blockchain, Block, Transaction, mine_block
 from daemon import connect_to_peer_async
+
+
+# Parse command-line arguments for --gpu
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument('--gpu', action='store_true')
+args, _ = parser.parse_known_args()
+USE_GPU = args.gpu
+
+DEBUG = '--debug' in sys.argv or os.environ.get('OWONERO_DEBUG', '0') == '1'
+
+def debug_print(msg):
+    if DEBUG:
+        print_info(msg)
 
 
 class AsyncMiner:
@@ -123,34 +137,11 @@ class AsyncMiner:
 
                 debug_print(f"[DEBUG] Starting mine_block for block {prev_block.index + 1}")
                 start_time = time.time()
-                block, block_attempts = mine_block(prev_block, transactions, difficulty)
-                end_time = time.time()
-                debug_print(f"[DEBUG] mine_block finished. Attempts: {block_attempts}, Time: {end_time - start_time:.2f}s")
-
-                attempts += block_attempts
-
-                debug_print(f"[DEBUG] Submitting block {block.index} to node...")
-                submit_ok = await self._submit_block(block)
-                debug_print(f"[DEBUG] Block submission result: {submit_ok}")
-                if submit_ok:
-                    blocks_found += 1
-                    hashrate = block_attempts / (end_time - start_time)
-                    print_success(f"Task {task_id}: Block {block.index} found! Hashrate: {hashrate:.1f} H/s")
-                    if max_blocks > 0 and blocks_found >= max_blocks:
-                        debug_print(f"[DEBUG] Task {task_id} reached block limit {max_blocks}")
-                        break
-                else:
-                    print_warning(f"Task {task_id}: Block {block.index} rejected")
-
-                await asyncio.sleep(0.1)
             except Exception as e:
-                print_error(f"[DEBUG] Async mining task {task_id} error: {e}")
-                await asyncio.sleep(2)
-        debug_print(f"[DEBUG] Mining worker {task_id} exiting. Total attempts: {attempts}, Blocks found: {blocks_found}")
-        async with self.lock:
-            self.total_attempts += attempts
-            self.blocks_found += blocks_found
-
+                print_error(f"Task {task_id}: Exception in mining loop setup: {e}")
+                await asyncio.sleep(5)
+                continue
+                
     async def _stats_worker(self) -> None:
         """Async statistics reporting task"""
         start_time = time.time()

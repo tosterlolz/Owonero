@@ -252,8 +252,8 @@ class Blockchain:
 
 
 def calculate_hash(block: Block, mem: Optional[bytearray] = None) -> str:
-    """Calculate block hash using scrypt for memory-hard PoW, then SHA3-256."""
-    import hashlib
+    """Calculate block hash using custom rx/owo memory-hard PoW, then SHA3-256."""
+    import hashlib, random
     try:
         # Serialize block data (exclude hash field)
         block_for_hash = {
@@ -268,18 +268,22 @@ def calculate_hash(block: Block, mem: Optional[bytearray] = None) -> str:
         # Use block index and prev_hash as salt
         salt = hashlib.sha3_256(f"{block.index}{block.prev_hash}".encode()).digest()
 
-        # Scrypt full KDF: N=2^14, r=8, p=1, key length=32
-        scrypt_hash = hashlib.scrypt(
-            password=block_bytes,
-            salt=salt,
-            n=16384,
-            r=8,
-            p=1,
-            dklen=32
-        )
-
-        # Final hash: SHA3-256 of scrypt output
-        final_hash = hashlib.sha3_256(scrypt_hash).hexdigest()
+        # rx/owo PoW: memory-hard, random mixing, repeated rounds
+        rounds = 64
+        mem_size = 1024 * 32  # 32KB
+        mem = bytearray(mem_size)
+        seed = int.from_bytes(salt, 'big') ^ int.from_bytes(block_bytes[:32], 'big', signed=False)
+        random.seed(seed)
+        for i in range(mem_size):
+            mem[i] = random.randint(0, 255)
+        h = hashlib.sha3_256(block_bytes + salt + mem).digest()
+        for r in range(rounds):
+            # Mix memory and hash
+            offset = (h[0] + r) % mem_size
+            for j in range(32):
+                mem[(offset + j) % mem_size] ^= h[j % len(h)]
+            h = hashlib.sha3_256(h + mem[offset:offset+32] + salt).digest()
+        final_hash = hashlib.sha3_256(h + mem).hexdigest()
         return final_hash
     except Exception as e:
         print_error(f"Hashing error: {e}")
