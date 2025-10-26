@@ -64,17 +64,18 @@ go build -o owonero ./src
 ./owonero -d -p 6969
 
 # Or connect to existing network
-./owonero -d -n existing-node.com:6969 -p 6969
+./owonero -d -n owonero.yabai.buzz:6969 -p 6969
 ```
 
 ### 3. Start Mining
 
 ```bash
 # Mine with 4 threads
-./owonero -m -n localhost:6969 -t 4
+./owonero -m -n localhost:6969 -t 4 # SOLO
 
 # Mine to remote node
-./owonero -m -n node.example.com:6969 -t 8
+./owonero -m -n owonero.yabai.buzz:6969 -t 8 # SOLO
+./owonero -m --pool -n owonero.yabai.buzz:6969 -t 8 # POOL
 ```
 
 ### 4. Check Your Wallet

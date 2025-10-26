@@ -7,5 +7,7 @@
   "peers": [],
   "auto_update": true,
   "sync_on_startup": true,
-  "target_block_time": 30
+  "target_block_time": 30,
+  "mining_intensity": 100,
+  "pool": true
 }

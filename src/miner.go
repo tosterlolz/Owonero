@@ -36,7 +36,7 @@ func discoverPeers(nodeAddr string) ([]string, error) {
 
 // startMining kopie bloki i wysyła je do node
 // blocksToMine == 0 -> mine forever
-func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bool) error {
+func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bool, intensity int) error {
 	w, err := loadOrCreateWallet(walletPath)
 	if err != nil {
 		return err
@@ -290,6 +290,16 @@ func startMining(walletPath, nodeAddr string, blocksToMine, threads int, pool bo
 					case blockCh <- newBlock:
 					default:
 						time.Sleep(100 * time.Millisecond)
+					}
+				}
+
+				// simple CPU throttle: sleep a tiny amount proportional to (100 - intensity)
+				if intensity < 100 && intensity > 0 {
+					throttle := float64(100-intensity) / 100.0
+					// base sleep up to 10ms
+					sleepMs := int(10.0 * throttle)
+					if sleepMs > 0 {
+						time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 					}
 				}
 			}
