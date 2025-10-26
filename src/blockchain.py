@@ -313,28 +313,30 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
 
     attempts = 0
     nonce = 0
-
+    batch_size = 16  # Try 16 nonces per loop for better CPU cache usage
     while True:
-        block.nonce = nonce
-        block.hash = calculate_hash(block)
-        attempts += 1
-
+        found = False
+        for _ in range(batch_size):
+            block.nonce = nonce
+            block.hash = calculate_hash(block)
+            attempts += 1
+            if block.hash.startswith(target_prefix):
+                found = True
+                break
+            nonce += 1
         # Periodically report progress to caller
         if progress_callback is not None and report_every > 0 and attempts % report_every == 0:
             try:
                 progress_callback(report_every)
             except Exception:
                 pass
-
-        if block.hash.startswith(target_prefix):
+        if found:
             if progress_callback is not None and report_every > 0 and attempts % report_every != 0:
                 try:
                     progress_callback(attempts % report_every)
                 except Exception:
                     pass
             return block, attempts
-
-        nonce += 1
 
 
 def sign_transaction(tx: Transaction, private_key_pem: str) -> bool:
