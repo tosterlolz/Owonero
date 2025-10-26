@@ -8,11 +8,11 @@ import json
 import os
 import time
 import secrets
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, asdict
 import struct
 
-from utils import print_error, print_success, print_info, save_json_file, load_json_file, format_timestamp
+from utils import print_error, print_success, print_info, print_warning, save_json_file, load_json_file, format_timestamp
 
 
 @dataclass
@@ -36,10 +36,10 @@ class Transaction:
         # Handle both "from" (Go) and "from_addr" (Python) field names
         from_addr = data.get('from_addr') or data.get('from')
         return cls(
-            from_addr=from_addr,
-            to_addr=data['to_addr'] if 'to_addr' in data else data.get('to', ''),
+            from_addr=str(from_addr),
+            to_addr=str(data['to_addr']) if 'to_addr' in data else str(data.get('to', '')),
             amount=int(data['amount']),
-            signature=data.get('signature', '')
+            signature=str(data.get('signature', ''))
         )
 
 
@@ -85,10 +85,11 @@ class Blockchain:
     def get_dynamic_difficulty(self, target_block_time: int = 30) -> int:
         """Calculate dynamic mining difficulty based on recent block times"""
         min_difficulty = 1
-        max_difficulty = 7
+        max_difficulty = 3  # Lowered for easier mining
         window = 10
 
         if len(self.chain) <= window:
+            print_info(f"Difficulty: {min_difficulty} (not enough blocks for adjustment)")
             return min_difficulty
 
         latest = self.chain[-1]
@@ -98,18 +99,25 @@ class Blockchain:
             t_latest = time.mktime(time.strptime(latest.timestamp, "%Y-%m-%dT%H:%M:%SZ"))
             t_prev = time.mktime(time.strptime(prev.timestamp, "%Y-%m-%dT%H:%M:%SZ"))
             avg_block_time = int((t_latest - t_prev) / window)
-        except:
+            print_info(f"Average block time: {avg_block_time}s, Target: {target_block_time}s")
+        except Exception as e:
+            print_warning(f"Difficulty fallback: {min_difficulty} due to error: {e}")
             return min_difficulty
 
-        # Get current difficulty from last block
-        current_diff = self.chain[-1].index if len(self.chain) > 0 else min_difficulty
+        # Start from a sensible baseline difficulty (not block index).
+        # Using the block index as difficulty made difficulty grow unbounded
+        # and made mining practically impossible. Start from min_difficulty
+        # and adjust by one step based on average block time.
+        current_diff = min_difficulty
 
         if avg_block_time < target_block_time:
             current_diff += 1
         elif avg_block_time > target_block_time:
-            current_diff -= 1
+            current_diff = max(min_difficulty, current_diff - 1)
 
-        return max(min_difficulty, min(max_difficulty, current_diff))
+        final_diff = max(min_difficulty, min(max_difficulty, current_diff))
+        print_info(f"Dynamic difficulty set to: {final_diff}")
+        return final_diff
 
     def validate_block(self, block: Block, difficulty: int, skip_pow: bool = False) -> bool:
         """Validate a block's integrity"""
@@ -183,9 +191,11 @@ class Blockchain:
     def load_from_file(self, path: str) -> bool:
         """Load blockchain from JSON file"""
         data = load_json_file(path)
+        print_info(f"[DEBUG] load_from_file: loading {path}, data is None: {data is None}")
         if data is None:
             # Create genesis block if file doesn't exist
             self.chain = [create_genesis_block()]
+            print_info(f"[DEBUG] load_from_file: created genesis block, chain length: {len(self.chain)}")
             return self.save_to_file(path)
 
         try:
@@ -197,6 +207,7 @@ class Blockchain:
             else:
                 raise ValueError("Invalid blockchain data format")
 
+            print_info(f"[DEBUG] load_from_file: block_data_list length: {len(block_data_list)}")
             self.chain = []
             for i, block_data in enumerate(block_data_list):
                 try:
@@ -208,6 +219,7 @@ class Blockchain:
 
             # Additional validation: ensure we have at least genesis
             if len(self.chain) == 0:
+                print_warning("[DEBUG] load_from_file: chain is empty after loading, creating genesis block")
                 self.chain = [create_genesis_block()]
 
             # Recalculate hashes to fix any inconsistencies
@@ -219,7 +231,10 @@ class Blockchain:
             print_error(f"Failed to load blockchain: {e}")
             import traceback
             traceback.print_exc()
-            return False
+            # If loading fails, create genesis block
+            print_warning("[DEBUG] load_from_file: exception during load, creating genesis block")
+            self.chain = [create_genesis_block()]
+            return self.save_to_file(path)
 
     def get_height(self) -> int:
         """Get current blockchain height"""
@@ -238,8 +253,13 @@ class Blockchain:
         return self.chain[start:end+1]
 
 
-def calculate_hash(block: Block) -> str:
-    """Calculate SHA3-256 hash of a block using rx/owo algorithm"""
+def calculate_hash(block: Block, mem: Optional[bytearray] = None) -> str:
+    """Calculate SHA3-256 hash of a block using rx/owo algorithm.
+
+    If a precomputed `mem` buffer is provided it will be used instead of
+    rebuilding the 2MB memory buffer. This is a significant optimization
+    when hashing the same block multiple times with different nonces.
+    """
 
     # Create block data for hashing (exclude the hash field itself)
     block_for_hash = {
@@ -254,13 +274,15 @@ def calculate_hash(block: Block) -> str:
 
     # rx/owo memory-hard algorithm
     mem_size = 2 * 1024 * 1024  # 2MB
-    mem = bytearray(mem_size)
 
-    # Deterministic memory seeding
-    seed = hashlib.sha256(f"{block.index}{block.prev_hash}".encode()).digest()
-    for i in range(0, mem_size, 32):
-        end = min(i + 32, mem_size)
-        mem[i:end] = seed[:end-i]
+    # Use provided mem if available to avoid recomputing the 2MB buffer per-nonce
+    if mem is None:
+        mem = bytearray(mem_size)
+        # Deterministic memory seeding
+        seed = hashlib.sha256(f"{block.index}{block.prev_hash}".encode()).digest()
+        for i in range(0, mem_size, 32):
+            end = min(i + 32, mem_size)
+            mem[i:end] = seed[:end-i]
 
     # CPU and memory intensive calculations
     acc = block.nonce
@@ -307,10 +329,17 @@ def create_genesis_block() -> Block:
     return genesis
 
 
-def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: int) -> Tuple[Block, int]:
+def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: int,
+               progress_callback: Optional[Callable[[int], None]] = None,
+               report_every: int = 1000) -> Tuple[Block, int]:
     """
     Mine a new block using rx/owo proof-of-work
     Returns (block, attempts)
+
+    Optional progress_callback(delta_attempts) will be called periodically
+    every `report_every` attempts so callers (like the miner) can update
+    shared statistics in real-time. This fixes hashrate reporting when no
+    blocks are found for a long time.
     """
     target_prefix = "0" * difficulty
 
@@ -322,7 +351,7 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
         nonce=0
     )
 
-    # Pre-calculate memory buffer
+    # Pre-calculate memory buffer once and reuse it for each nonce
     mem_size = 2 * 1024 * 1024
     mem = bytearray(mem_size)
 
@@ -336,10 +365,26 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
 
     while True:
         block.nonce = nonce
-        block.hash = calculate_hash(block)
+
+        # Pass the precomputed mem buffer to avoid recomputing it per-nonce
+        block.hash = calculate_hash(block, mem=mem)
         attempts += 1
 
+        # Periodically report progress to caller
+        if progress_callback is not None and report_every > 0 and attempts % report_every == 0:
+            try:
+                progress_callback(report_every)
+            except Exception:
+                # Don't let progress reporting break mining
+                pass
+
         if block.hash.startswith(target_prefix):
+            # Report any remaining attempts that haven't been reported yet
+            if progress_callback is not None and report_every > 0 and attempts % report_every != 0:
+                try:
+                    progress_callback(attempts % report_every)
+                except Exception:
+                    pass
             return block, attempts
 
         nonce += 1

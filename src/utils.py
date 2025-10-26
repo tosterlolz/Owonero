@@ -11,11 +11,7 @@ import hashlib
 import secrets
 from typing import Dict, List, Any, Optional
 import time
-import zipfile
 import urllib.request
-import urllib.error
-import tempfile
-import shutil
 
 # ANSI Color constants
 RESET = "\033[0m"
@@ -76,27 +72,6 @@ def get_platform_info() -> tuple[str, str]:
 
     return system, arch
 
-def download_file(url: str, dest_path: str) -> bool:
-    """Download a file from URL to destination path"""
-    try:
-        with urllib.request.urlopen(url) as response:
-            with open(dest_path, 'wb') as f:
-                shutil.copyfileobj(response, f)
-        return True
-    except Exception as e:
-        print_error(f"Failed to download {url}: {e}")
-        return False
-
-def extract_zip(zip_path: str, dest_dir: str) -> bool:
-    """Extract a zip file to destination directory"""
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(dest_dir)
-        return True
-    except Exception as e:
-        print_error(f"Failed to extract {zip_path}: {e}")
-        return False
-
 def check_for_updates() -> None:
     """Check for updates from GitHub releases"""
     try:
@@ -115,8 +90,7 @@ def check_for_updates() -> None:
 
             if is_version_newer(latest_version, VERSION):
                 print_warning(f"New version available: {latest_version} (current: {VERSION})")
-                print_info("Downloading update...")
-                download_and_install_update(data)
+                print_info("Run 'git pull' to update to the latest version")
             else:
                 print_success(f"You are running the latest version ({VERSION})")
 
@@ -141,84 +115,6 @@ def is_version_newer(latest: str, current: str) -> bool:
         return False
     except:
         return False
-
-def download_and_install_update(release_data: dict) -> None:
-    """Download and install the latest update"""
-    system, arch = get_platform_info()
-    asset_name = f"owonero-{system}-{arch}.zip"
-
-    download_url = None
-    for asset in release_data.get('assets', []):
-        if asset.get('name') == asset_name:
-            download_url = asset.get('browser_download_url')
-            break
-
-    if not download_url:
-        print_error(f"No suitable update found for {system}/{arch}")
-        return
-
-    # Get current executable path
-    try:
-        exec_path = os.path.abspath(sys.argv[0])
-    except:
-        print_error("Failed to get executable path")
-        return
-
-    # Create backup
-    backup_path = exec_path + ".backup"
-    try:
-        if os.path.exists(exec_path):
-            os.rename(exec_path, backup_path)
-    except Exception as e:
-        print_error(f"Failed to create backup: {e}")
-        return
-
-    # Download to temp zip file
-    temp_zip_path = exec_path + ".tmp.zip"
-    try:
-        if not download_file(download_url, temp_zip_path):
-            os.rename(backup_path, exec_path)  # restore
-            return
-
-        # Extract the zip file
-        print_info("Extracting update...")
-        extract_dir = os.path.dirname(exec_path)
-        if not extract_zip(temp_zip_path, extract_dir):
-            os.remove(temp_zip_path)
-            os.rename(backup_path, exec_path)  # restore
-            return
-
-        # Clean up zip file
-        os.remove(temp_zip_path)
-
-        # Make executable on Unix
-        if system != "windows":
-            try:
-                os.chmod(exec_path, 0o755)
-            except Exception as e:
-                print_error(f"Failed to make executable: {e}")
-                os.rename(backup_path, exec_path)  # restore
-                return
-
-        # Clean up backup
-        try:
-            os.remove(backup_path)
-        except:
-            pass
-
-        print_success("Update installed successfully! Please restart the application.")
-        sys.exit(0)
-
-    except Exception as e:
-        print_error(f"Update installation failed: {e}")
-        # Cleanup and restore
-        try:
-            if os.path.exists(temp_zip_path):
-                os.remove(temp_zip_path)
-            if os.path.exists(backup_path) and not os.path.exists(exec_path):
-                os.rename(backup_path, exec_path)
-        except:
-            pass
 
 def load_json_file(filepath: str) -> Optional[dict]:
     """Load and parse a JSON file"""
@@ -252,7 +148,7 @@ def get_file_size_mb(filepath: str) -> float:
     except:
         return 0.0
 
-def format_timestamp(ts: str = None) -> str:
+def format_timestamp(ts: Optional[str] = None) -> str:
     """Format timestamp for RFC3339"""
     if ts is None:
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

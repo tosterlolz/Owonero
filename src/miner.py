@@ -78,64 +78,79 @@ class AsyncMiner:
         blocks_found = 0
         attempts = 0
 
-        try:
-            while self.running:
-                # Get current blockchain state from node
-                blockchain = Blockchain()
-                if not await self._sync_blockchain(blockchain):
-                    await asyncio.sleep(5)  # Wait before retry
+        while self.running:
+            try:
+                print_info(f"[DEBUG] Mining worker {task_id} loop start. Fetching latest block from node...")
+                # Fetch latest block from node
+                response = await connect_to_peer_async(self.node_address, "getchain")
+                print_info(f"[DEBUG] Task {task_id}: Raw node response: {repr(response)}")
+                if not response:
+                    print_error(f"Task {task_id}: Failed to fetch chain from node.")
+                    await asyncio.sleep(5)
                     continue
 
-                if len(blockchain.chain) == 0:
-                    await asyncio.sleep(1)
+                # Parse chain from node response
+                lines = response.strip().split('\n')
+                if len(lines) >= 2:
+                    json_data = lines[1]
+                else:
+                    json_data = response.strip()
+                print_info(f"[DEBUG] Task {task_id}: JSON data for chain: {json_data}")
+                try:
+                    chain_data = json.loads(json_data)
+                    print_info(f"[DEBUG] Task {task_id}: Parsed chain_data length: {len(chain_data) if chain_data else 0}")
+                    if not chain_data:
+                        print_error(f"Task {task_id}: Node chain is empty.")
+                        await asyncio.sleep(1)
+                        continue
+                    prev_block = Block.from_dict(chain_data[-1])
+                except Exception as e:
+                    print_error(f"Task {task_id}: Error parsing node chain: {e}")
+                    await asyncio.sleep(2)
                     continue
 
-                # Create coinbase transaction
                 coinbase_tx = Transaction(
                     from_addr="coinbase",
                     to_addr=self.wallet_address,
-                    amount=50  # Block reward
+                    amount=50
                 )
-
-                # Get pending transactions (simplified - just coinbase for now)
                 transactions = [coinbase_tx]
-
-                # Get current difficulty
+                # Use difficulty from node chain
+                blockchain = Blockchain()
+                blockchain.chain = [Block.from_dict(b) for b in chain_data]
                 difficulty = blockchain.get_dynamic_difficulty()
-
-                # Mine block
-                prev_block = blockchain.chain[-1]
+                print_info(f"[DEBUG] Difficulty for mining: {difficulty}")
                 print_info(f"Task {task_id}: Mining block {prev_block.index + 1} (difficulty: {difficulty})")
 
+                print_info(f"[DEBUG] Starting mine_block for block {prev_block.index + 1}")
                 start_time = time.time()
                 block, block_attempts = mine_block(prev_block, transactions, difficulty)
                 end_time = time.time()
+                print_info(f"[DEBUG] mine_block finished. Attempts: {block_attempts}, Time: {end_time - start_time:.2f}s")
 
                 attempts += block_attempts
 
-                # Submit block to node
-                if await self._submit_block(block):
+                print_info(f"[DEBUG] Submitting block {block.index} to node...")
+                submit_ok = await self._submit_block(block)
+                print_info(f"[DEBUG] Block submission result: {submit_ok}")
+                if submit_ok:
                     blocks_found += 1
                     hashrate = block_attempts / (end_time - start_time)
                     print_success(f"Task {task_id}: Block {block.index} found! Hashrate: {hashrate:.1f} H/s")
-
-                    # Check if we've reached the block limit
                     if max_blocks > 0 and blocks_found >= max_blocks:
+                        print_info(f"[DEBUG] Task {task_id} reached block limit {max_blocks}")
                         break
                 else:
                     print_warning(f"Task {task_id}: Block {block.index} rejected")
 
-                # Small delay to prevent overwhelming the node
                 await asyncio.sleep(0.1)
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print_error(f"Async mining task {task_id} error: {e}")
-        finally:
-            async with self.lock:
-                self.total_attempts += attempts
-                self.blocks_found += blocks_found
+            except Exception as e:
+                print_error(f"[DEBUG] Async mining task {task_id} error: {e}")
+                await asyncio.sleep(2)
+        print_info(f"[DEBUG] Mining worker {task_id} exiting. Total attempts: {attempts}, Blocks found: {blocks_found}")
+        async with self.lock:
+            self.total_attempts += attempts
+            self.blocks_found += blocks_found
 
     async def _stats_worker(self) -> None:
         """Async statistics reporting task"""
@@ -159,7 +174,16 @@ class AsyncMiner:
             if not response:
                 return False
 
-            chain_data = json.loads(response)
+            # Handle multi-line response from Go daemon (status line + JSON)
+            lines = response.strip().split('\n')
+            if len(lines) >= 2:
+                # Skip the status line and parse the JSON from the second line
+                json_data = lines[1]
+            else:
+                # Fallback for single-line JSON response
+                json_data = response.strip()
+
+            chain_data = json.loads(json_data)
             blockchain.chain = [Block.from_dict(block_data) for block_data in chain_data]
             return True
 
@@ -168,41 +192,90 @@ class AsyncMiner:
             return False
 
     async def _submit_block(self, block: Block) -> bool:
-        """Submit mined block to node asynchronously"""
+        """Submit mined block to node asynchronously (two-step protocol)"""
+        import asyncio
+        import socket
         try:
-            block_json = json.dumps(block.to_dict())
-            response = await connect_to_peer_async(self.node_address, f"submitblock\n{block_json}")
+            host, port_str = self.node_address.rsplit(':', 1)
+            port = int(port_str)
+            reader, writer = await asyncio.open_connection(host, port)
 
-            return response and response.lower() == "ok"
+            # Step 1: Send submitblock command
+            writer.write(b"submitblock\n")
+            await writer.drain()
 
+            # Step 2: Wait for daemon prompt
+            prompt = await reader.readline()
+            prompt_str = prompt.decode().strip().lower()
+            if not prompt_str.startswith("send block json"):
+                print_error(f"Daemon did not prompt for block JSON: {prompt_str}")
+                writer.close()
+                await writer.wait_closed()
+                return False
+
+            # Step 3: Send block JSON
+            block_json = json.dumps(block.to_dict()) + "\n"
+            writer.write(block_json.encode())
+            await writer.drain()
+
+            # Step 4: Read response
+            response = await reader.readline()
+            response_str = response.decode().strip().lower()
+
+            writer.close()
+            await writer.wait_closed()
+
+            return response_str == "ok"
         except Exception as e:
             print_error(f"Failed to submit block: {e}")
             return False
 
 
-async def start_async_mining(wallet_path: str, node_address: str, blocks: int, threads: int) -> bool:
+async def start_async_mining(wallet_or_address: str, node_address: str, blocks: int, threads: int) -> bool:
     """Start async mining with the given parameters"""
     try:
-        # Load wallet
-        from wallet import load_or_create_wallet
-        wallet = load_or_create_wallet(wallet_path)
+        # Determine if wallet_or_address is a file path or address
+        from wallet import validate_address, load_or_create_wallet
+
+        wallet_address = None
+        wallet = None
+        if validate_address(wallet_or_address):
+            wallet_address = wallet_or_address
+            print_info(f"Using wallet address: {wallet_address}")
+        else:
+            wallet = load_or_create_wallet(wallet_or_address)
+            if not wallet or not wallet.address:
+                print_error(f"Failed to load wallet from {wallet_or_address}")
+                return False
+            wallet_address = wallet.address
+            print_info(f"Using wallet from file: {wallet_or_address}")
+
+        # Test node connection before starting miner
+        from daemon import connect_to_peer_async
+        test_response = await connect_to_peer_async(node_address, "getchain")
+        if not test_response:
+            print_error(f"Failed to connect to node at {node_address}. Is the daemon running?")
+            return False
 
         # Create async miner
-        miner = AsyncMiner(wallet.address, node_address, threads)
+        miner = AsyncMiner(wallet_address, node_address, threads)
 
         # Setup signal handlers for graceful shutdown
         def signal_handler():
             print_info("Received shutdown signal...")
             asyncio.create_task(miner.stop_mining())
 
-        # Handle signals in asyncio way
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, signal_handler)
+            try:
+                loop.add_signal_handler(sig, signal_handler)
+            except NotImplementedError:
+                pass  # Not supported on Windows for SIGTERM
 
         # Start mining
-        if not await miner.start_mining(blocks):
-            print_error("Failed to start async mining")
+        started = await miner.start_mining(blocks)
+        if not started:
+            print_error("Failed to start async mining (already running or internal error)")
             return False
 
         # Keep main task alive
@@ -217,15 +290,17 @@ async def start_async_mining(wallet_path: str, node_address: str, blocks: int, t
         return True
 
     except Exception as e:
+        import traceback
         print_error(f"Async mining error: {e}")
+        traceback.print_exc()
         return False
 
 
-async def mine_forever_async(wallet_path: str, node_address: str, threads: int) -> bool:
+async def mine_forever_async(wallet_or_address: str, node_address: str, threads: int) -> bool:
     """Mine indefinitely using async"""
-    return await start_async_mining(wallet_path, node_address, 0, threads)
+    return await start_async_mining(wallet_or_address, node_address, 0, threads)
 
 
-async def mine_blocks_async(wallet_path: str, node_address: str, block_count: int, threads: int) -> bool:
+async def mine_blocks_async(wallet_or_address: str, node_address: str, block_count: int, threads: int) -> bool:
     """Mine a specific number of blocks using async"""
-    return await start_async_mining(wallet_path, node_address, block_count, threads)
+    return await start_async_mining(wallet_or_address, node_address, block_count, threads)
