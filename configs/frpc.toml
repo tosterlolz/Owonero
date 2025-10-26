@@ -1,0 +1,22 @@
+# FRP Client Configuration for Owonero Miner
+[common]
+server_addr = "192.168.0.10"
+server_port = 6969
+
+[miner-rpc]
+type = "tcp"
+local_ip = "127.0.0.1"
+local_port = 6969
+remote_port = 6969
+use_encryption = false
+use_compression = true
+
+[miner-stats]
+type = "tcp"
+local_ip = "127.0.0.1"
+local_port = 6970
+remote_port = 6970
+use_encryption = false
+use_compression = true
+
+# Add more tunnels as needed for additional services
