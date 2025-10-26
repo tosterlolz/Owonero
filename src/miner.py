@@ -7,12 +7,16 @@ import asyncio
 import time
 import signal
 import sys
+import sys
+import os
+from utils import print_info
+
 import json
 from typing import List, Optional, Callable, Tuple
 import os
 
 from utils import print_error, print_success, print_info, print_warning, BLOCKCHAIN_FILE
-from blockchain import Blockchain, Block, Transaction, mine_block
+from blockchain import Blockchain, Block, Transaction, mine_block, debug_print
 from daemon import connect_to_peer_async
 
 
@@ -28,7 +32,7 @@ class AsyncMiner:
         self.total_attempts = 0
         self.blocks_found = 0
         self.lock = asyncio.Lock()
-
+    # ...existing code...
     async def start_mining(self, blocks: int = 0) -> bool:
         """Start async mining process"""
         if self.running:
@@ -80,10 +84,10 @@ class AsyncMiner:
 
         while self.running:
             try:
-                print_info(f"[DEBUG] Mining worker {task_id} loop start. Fetching latest block from node...")
+                debug_print(f"[DEBUG] Mining worker {task_id} loop start. Fetching latest block from node...")
                 # Fetch latest block from node
                 response = await connect_to_peer_async(self.node_address, "getlatestblock")
-                print_info(f"[DEBUG] Task {task_id}: Raw node response: {repr(response)}")
+                debug_print(f"[DEBUG] Task {task_id}: Raw node response: {repr(response)}")
                 if not response:
                     print_error(f"Task {task_id}: Failed to fetch latest block from node.")
                     await asyncio.sleep(5)
@@ -95,7 +99,7 @@ class AsyncMiner:
                     json_data = lines[1]
                 else:
                     json_data = response.strip()
-                print_info(f"[DEBUG] Task {task_id}: JSON data for latest block: {json_data}")
+                debug_print(f"[DEBUG] Task {task_id}: JSON data for latest block: {json_data}")
                 try:
                     block_data = json.loads(json_data)
                     prev_block = Block.from_dict(block_data)
@@ -114,26 +118,26 @@ class AsyncMiner:
                 blockchain = Blockchain()
                 blockchain.chain = [prev_block]
                 difficulty = blockchain.get_dynamic_difficulty()
-                print_info(f"[DEBUG] Difficulty for mining: {difficulty}")
+                debug_print(f"[DEBUG] Difficulty for mining: {difficulty}")
                 print_info(f"Task {task_id}: Mining block {prev_block.index + 1} (difficulty: {difficulty})")
 
-                print_info(f"[DEBUG] Starting mine_block for block {prev_block.index + 1}")
+                debug_print(f"[DEBUG] Starting mine_block for block {prev_block.index + 1}")
                 start_time = time.time()
                 block, block_attempts = mine_block(prev_block, transactions, difficulty)
                 end_time = time.time()
-                print_info(f"[DEBUG] mine_block finished. Attempts: {block_attempts}, Time: {end_time - start_time:.2f}s")
+                debug_print(f"[DEBUG] mine_block finished. Attempts: {block_attempts}, Time: {end_time - start_time:.2f}s")
 
                 attempts += block_attempts
 
-                print_info(f"[DEBUG] Submitting block {block.index} to node...")
+                debug_print(f"[DEBUG] Submitting block {block.index} to node...")
                 submit_ok = await self._submit_block(block)
-                print_info(f"[DEBUG] Block submission result: {submit_ok}")
+                debug_print(f"[DEBUG] Block submission result: {submit_ok}")
                 if submit_ok:
                     blocks_found += 1
                     hashrate = block_attempts / (end_time - start_time)
                     print_success(f"Task {task_id}: Block {block.index} found! Hashrate: {hashrate:.1f} H/s")
                     if max_blocks > 0 and blocks_found >= max_blocks:
-                        print_info(f"[DEBUG] Task {task_id} reached block limit {max_blocks}")
+                        debug_print(f"[DEBUG] Task {task_id} reached block limit {max_blocks}")
                         break
                 else:
                     print_warning(f"Task {task_id}: Block {block.index} rejected")
@@ -142,7 +146,7 @@ class AsyncMiner:
             except Exception as e:
                 print_error(f"[DEBUG] Async mining task {task_id} error: {e}")
                 await asyncio.sleep(2)
-        print_info(f"[DEBUG] Mining worker {task_id} exiting. Total attempts: {attempts}, Blocks found: {blocks_found}")
+        debug_print(f"[DEBUG] Mining worker {task_id} exiting. Total attempts: {attempts}, Blocks found: {blocks_found}")
         async with self.lock:
             self.total_attempts += attempts
             self.blocks_found += blocks_found

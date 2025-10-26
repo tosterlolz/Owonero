@@ -148,6 +148,9 @@ class AsyncDaemon:
                                     if self.blockchain.add_block(block, difficulty):
                                         writer.write(b"ok\n")
                                         await writer.drain()
+                                        # Save blockchain after successful block addition
+                                        from utils import BLOCKCHAIN_FILE
+                                        self.blockchain.save_to_file(BLOCKCHAIN_FILE)
                                     else:
                                         writer.write(b"error: block validation failed\n")
                                         await writer.drain()

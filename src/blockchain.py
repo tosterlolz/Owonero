@@ -330,8 +330,7 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
         attempts += 1
 
         # Debug: print hash and target
-        if DEBUG and (attempts <= 10 or attempts % 1000 == 0):
-            debug_print(f"[DEBUG] Attempt {attempts}: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
+        debug_print(f"[DEBUG] Attempt {attempts}: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}") if (attempts <= 10 or attempts % 1000 == 0) else None
 
         # Periodically report progress to caller
         if progress_callback is not None and report_every > 0 and attempts % report_every == 0:
@@ -341,8 +340,7 @@ def mine_block(prev_block: Block, transactions: List[Transaction], difficulty: i
                 pass
 
         if block.hash.startswith(target_prefix):
-            if DEBUG:
-                print_success(f"[DEBUG] Found valid PoW: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
+            debug_print(f"[DEBUG] Found valid PoW: nonce={nonce}, hash={block.hash}, target_prefix={target_prefix}")
             if progress_callback is not None and report_every > 0 and attempts % report_every != 0:
                 try:
                     progress_callback(attempts % report_every)
