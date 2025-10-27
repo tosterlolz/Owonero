@@ -25,6 +25,7 @@ thread_local! {
     static SCRATCHPAD_BUF: RefCell<Vec<u8>> = RefCell::new(init_scratchpad());
 }
 
+
 // NOTE: the cancellable mining helper is implemented as an associated
 // function on `Blockchain` below. Keeping a single implementation avoids
 // duplication and potential name-resolution/visibility confusion.
@@ -36,7 +37,7 @@ fn init_scratchpad() -> Vec<u8> {
         .filter(|&v| v >= 1024)
         .unwrap_or(SCRATCHPAD_SIZE);
 
-    let buf = vec![0u8; size];
+    let mut buf = vec![0u8; size];
 
     // Only attempt to enable transparent huge pages when user opts in.
     let try_huge = std::env::var("OWONERO_USE_HUGEPAGES").map(|v| v != "0" && v.to_lowercase() != "false").unwrap_or(false);
@@ -617,3 +618,6 @@ pub fn verify_transaction_signature(tx: &Transaction, pub_key_hex: &str) -> bool
 
     public_key.verify(message.as_bytes(), &sig_bytes).is_ok()
 }
+// Use x86_64 prefetch intrinsics when available to touch cache lines
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0, _MM_HINT_T1};
