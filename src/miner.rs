@@ -65,6 +65,8 @@ pub async fn start_mining(
     let blockchain: Blockchain = serde_json::from_str(&chain_data.trim())?;
 
     let blockchain = Arc::new(Mutex::new(blockchain));
+    // Shared mempool (kept in sync with node via poller)
+    let mempool_shared: Arc<Mutex<Vec<crate::blockchain::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
     let attempts = Arc::new(AtomicU64::new(0));
     let mined = Arc::new(AtomicU64::new(0));
 
@@ -105,6 +107,7 @@ pub async fn start_mining(
     let log_tx_clone1 = log_tx.clone();
     let accepted_clone1 = accepted.clone();
     let rejected_clone1 = rejected.clone();
+    let mempool_for_submitter = mempool_shared.clone();
     let submitter_handle = tokio::spawn(async move {
         while let Some(block) = block_rx.recv().await {
             // Create new connection for each submission
@@ -131,6 +134,14 @@ pub async fn start_mining(
                         let _ = tx.send(format!("Block accepted! Index={} Hash={}", block.index, block.hash)).await;
                     } else {
                         println!("Block accepted! Index={} Hash={}", block.index, block.hash);
+                    }
+                    // Remove included transactions from local mempool (except coinbase)
+                    {
+                        let mut mp = mempool_for_submitter.lock().unwrap();
+                        mp.retain(|t| {
+                            // keep txs that are NOT in the block (match by signature)
+                            !block.transactions.iter().any(|bt| bt.signature == t.signature)
+                        });
                     }
                 } else {
                     rejected_clone1.fetch_add(1, Ordering::Relaxed);
@@ -209,6 +220,37 @@ pub async fn start_mining(
         }
         Ok::<(), anyhow::Error>(())
     });
+
+    // Background mempool poller: periodically fetch mempool from node
+    {
+        let node_addr = node_addr.to_string();
+        let mempool_clone = mempool_shared.clone();
+        let log_tx_clone = log_tx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            loop {
+                interval.tick().await;
+                // try to fetch mempool
+                if let Ok(mut stream) = TcpStream::connect(&node_addr).await {
+                    let (r, mut w) = stream.split();
+                    let mut r = BufReader::new(r);
+                    // Skip greeting
+                    let mut tmp = String::new();
+                    let _ = r.read_line(&mut tmp).await;
+                    // Request mempool
+                    if w.write_all(b"getmempool\n").await.is_ok() {
+                        let mut memline = String::new();
+                        if r.read_line(&mut memline).await.is_ok() {
+                            if let Ok(vec_tx) = serde_json::from_str::<Vec<crate::blockchain::Transaction>>(memline.trim()) {
+                                let mut mp = mempool_clone.lock().unwrap();
+                                *mp = vec_tx;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Forwarder threads: move from std channels into tokio mpsc so workers never block
     let _block_forwarder = {
@@ -299,6 +341,7 @@ pub async fn start_mining(
         let shutdown = shutdown_flag.clone();
         let block_sync_tx = block_sync_tx.clone();
         let share_sync_tx = share_sync_tx.clone();
+        let mempool_for_worker = mempool_shared.clone();
 
         let handle = std::thread::spawn(move || {
             loop {
@@ -315,6 +358,16 @@ pub async fn start_mining(
                     (prev_block, dyn_diff, diff)
                 };
 
+                // Collect transactions from mempool (clone under lock)
+                let mut txs: Vec<Transaction> = Vec::new();
+                {
+                    let mp = mempool_for_worker.lock().unwrap();
+                    // include up to 10 transactions
+                    for t in mp.iter().take(10) {
+                        txs.push(t.clone());
+                    }
+                }
+
                 let coinbase = Transaction {
                     from: "coinbase".to_string(),
                     to: wallet.address.clone(),
@@ -322,9 +375,15 @@ pub async fn start_mining(
                     signature: String::new(),
                 };
 
+                // Prepend coinbase to transactions included in the block
+                let mut block_txs = Vec::with_capacity(1 + txs.len());
+                block_txs.push(coinbase);
+                block_txs.extend(txs.into_iter());
+
                 let mut local_attempts = 0u64;
-                let block = Blockchain::mine_block(&prev_block, vec![coinbase], diff, &mut local_attempts);
-                attempts.fetch_add(local_attempts, Ordering::Relaxed);
+                // Pass a direct reference to the shared atomic so mine_block can
+                // flush attempt counts periodically for responsive hashrate reporting.
+                let block = Blockchain::mine_block(&prev_block, block_txs, diff, &mut local_attempts, Some(&*attempts));
 
                 if pool {
                     let share = (wallet.address.clone(), block.nonce, local_attempts, block);
@@ -348,6 +407,48 @@ pub async fn start_mining(
 
         worker_handles.push(handle);
     }
+
+    // Background poller: keep local blockchain copy up-to-date by polling node periodically.
+    // This reduces wasted work when other miners find blocks and the local template becomes stale.
+    let _blockchain_poller = {
+        let blockchain = blockchain.clone();
+        let node_addr = node_addr.to_string();
+        let shutdown = shutdown_flag.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+
+                match TcpStream::connect(&node_addr).await {
+                    Ok(s) => {
+                        let (r, mut w) = s.into_split();
+                        let mut r = BufReader::new(r);
+                        // Skip greeting
+                        let mut tmp = String::new();
+                        let _ = r.read_line(&mut tmp).await;
+                        // Request chain
+                        let _ = w.write_all(b"getchain\n").await;
+                        let mut chain_line = String::new();
+                        if r.read_line(&mut chain_line).await.is_ok() {
+                            if let Ok(new_chain) = serde_json::from_str::<crate::blockchain::Blockchain>(chain_line.trim()) {
+                                let mut bc_lock = blockchain.lock().unwrap();
+                                // If newer, replace local copy
+                                if new_chain.chain.len() > bc_lock.chain.len() {
+                                    *bc_lock = new_chain;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // ignore connection errors; will retry on next tick
+                    }
+                }
+            }
+        })
+    };
 
     // Wait for completion or cancellation
     if blocks_to_mine > 0 {

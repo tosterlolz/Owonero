@@ -1,0 +1,20 @@
+# Per-target rustflags and build configuration to enable optimized local release builds.
+# NOTE: `target-cpu = "native"` will generate CPU-specific code. When cross-building
+# or producing multi-target release artifacts (CI), consider removing or overriding
+# this setting to ensure portability.
+
+[build]
+# Keep the target dir under the repo target/ by default (optional)
+target-dir = "target"
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native", "-C", "link-arg=-s"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]

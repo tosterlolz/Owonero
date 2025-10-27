@@ -33,16 +33,18 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
     println!("Daemon listening on :{}", port);
 
     let shares: Arc<Mutex<HashMap<String, i64>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mempool: Arc<Mutex<Vec<crate::blockchain::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
 
     loop {
         let (socket, _) = listener.accept().await?;
-        let blockchain = blockchain.clone();
-        let pm = pm.clone();
-        let shares = shares.clone();
+    let blockchain = blockchain.clone();
+    let pm = pm.clone();
+    let shares = shares.clone();
+    let mempool = mempool.clone();
         let pool = pool;
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(socket, blockchain, pm, shares, pool).await {
+            if let Err(e) = handle_connection(socket, blockchain, pm, shares, mempool, pool).await {
                 eprintln!("Connection error: {}", e);
             }
         });
@@ -54,6 +56,7 @@ async fn handle_connection(
     blockchain: Arc<Mutex<Blockchain>>,
     _pm: Arc<PeerManager>,
     _shares: Arc<Mutex<HashMap<String, i64>>>,
+    mempool: Arc<Mutex<Vec<crate::blockchain::Transaction>>>,
     _pool: bool,
 ) -> anyhow::Result<()> {
     let (reader, mut writer) = socket.split();
@@ -111,6 +114,32 @@ async fn handle_connection(
                 let peers = _pm.get_peers();
                 let peers_json = serde_json::to_string(&peers)?;
                 writer.write_all(format!("{}\n", peers_json).as_bytes()).await?;
+            }
+            "getmempool" => {
+                let data = {
+                    let mp = mempool.lock().unwrap();
+                    serde_json::to_string(&*mp)?
+                };
+                writer.write_all(format!("{}\n", data).as_bytes()).await?;
+            }
+            "submittx" => {
+                // Read next line for tx JSON
+                line.clear();
+                reader.read_line(&mut line).await?;
+                let tx: crate::blockchain::Transaction = serde_json::from_str(line.trim())?;
+
+                // Verify signature
+                let valid = crate::blockchain::verify_transaction_signature(&tx, &tx.from);
+                if !valid {
+                    writer.write_all(b"rejected: invalid signature\n").await?;
+                } else {
+                    // add to mempool
+                    {
+                        let mut mp = mempool.lock().unwrap();
+                        mp.push(tx);
+                    }
+                    writer.write_all(b"ok\n").await?;
+                }
             }
             "submitshare" => {
                 // Read next line for share JSON

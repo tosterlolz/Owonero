@@ -163,8 +163,8 @@ impl Blockchain {
                 }
             }
 
-            // Final hash computation
-            let mut final_input = Vec::new();
+            // Final hash computation - preallocate to avoid reallocations
+            let mut final_input = Vec::with_capacity(8 * 3 + block_bytes.len() + 32);
             final_input.extend_from_slice(&a.to_le_bytes());
             final_input.extend_from_slice(&b.to_le_bytes());
             final_input.extend_from_slice(&c.to_le_bytes());
@@ -328,7 +328,7 @@ impl Blockchain {
 
     // Make mine_block an associated function that does not take a lock on the blockchain.
     // This lets miners compute blocks in parallel without holding the chain mutex.
-    pub fn mine_block(prev_block: &Block, transactions: Vec<Transaction>, difficulty: u32, attempts: &mut u64) -> Block {
+    pub fn mine_block(prev_block: &Block, transactions: Vec<Transaction>, difficulty: u32, attempts: &mut u64, attempts_atomic: Option<&std::sync::atomic::AtomicU64>) -> Block {
         let target_prefix = "0".repeat(difficulty as usize);
 
         let mut block = Block {
@@ -345,12 +345,39 @@ impl Blockchain {
         // The algorithm is inherently memory-hard due to the 2MB scratchpad usage
         // No precomputation needed as each nonce creates unique memory access patterns
 
+        // To provide responsive hashrate reporting, optionally flush local attempt
+        // counters into a shared atomic counter periodically. This avoids waiting
+        // until a full block is found to report attempts. The threshold may be
+        // configured with OWONERO_MINING_FLUSH (attempts). Default is 1024.
+        let mut flush_chunk: u64 = 0;
+        let flush_threshold: u64 = std::env::var("OWONERO_MINING_FLUSH")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(1024);
+
         loop {
             block.hash = Self::calculate_hash(&block);
             *attempts += 1;
+            flush_chunk += 1;
+
+            // Periodically flush into the shared atomic counter if provided.
+            if let Some(at) = attempts_atomic {
+                if flush_chunk >= flush_threshold {
+                    at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
+                    // reset chunk after flushing
+                    flush_chunk = 0;
+                }
+            }
 
             // Check if hash meets difficulty
             if block.hash.starts_with(&target_prefix) {
+                // flush any remaining attempts
+                if let Some(at) = attempts_atomic {
+                    if flush_chunk > 0 {
+                        at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
                 break;
             }
 

@@ -1153,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "owonero-rs"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1167,6 +1167,7 @@ dependencies = [
  "ratatui",
  "reqwest",
  "ring",
+ "semver",
  "serde",
  "serde_json",
  "sha3",
@@ -1484,6 +1485,12 @@ dependencies = [
  "core-foundation-sys",
  "libc",
 ]
+
+[[package]]
+name = "semver"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
 
 [[package]]
 name = "serde"
