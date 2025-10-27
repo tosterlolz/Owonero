@@ -225,7 +225,7 @@ pub async fn start_mining(
     {
         let node_addr = node_addr.to_string();
         let mempool_clone = mempool_shared.clone();
-        let log_tx_clone = log_tx.clone();
+        // let log_tx_clone = log_tx.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(2));
             loop {

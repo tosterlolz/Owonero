@@ -103,9 +103,9 @@ struct Cli {
     #[arg(long)]
     to: Option<String>,
 
-    /// Amount to send (integer)
-    #[arg(long)]
-    amount: Option<i64>,
+    /// Amount to send (can be decimal, e.g. 1.5)
+        #[arg(long)]
+        amount: Option<f64>,
 }
 
 enum Command {
@@ -114,14 +114,12 @@ enum Command {
     Mine,
     MinerUi,
     WalletInfo,
-    Send(String, i64),
+        Send,
 }
 
 fn determine_command(cli: &Cli) -> Command {
     if cli.send {
-        let to = cli.to.clone().unwrap_or_default();
-        let amount = cli.amount.unwrap_or(0);
-        return Command::Send(to, amount);
+        return Command::Send;
     }
     if cli.daemon {
         Command::Daemon
@@ -190,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Mine => run_mining_mode(cli.clone(), config.clone()).await,
         Command::MinerUi => run_miner_ui_mode().await,
         Command::WalletInfo => run_wallet_info_mode(config.clone()).await,
-        Command::Send(_, _) => run_send_mode(cli.clone(), config.clone()).await,
+    Command::Send => run_send_mode(cli.clone(), config.clone()).await,
     }
 }
 
@@ -305,14 +303,21 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
         _ => return Err(anyhow::anyhow!("missing --to argument for send")),
     };
 
-    let amount = cli.amount.unwrap_or(0);
-    if amount <= 0 {
+    let amount_f = cli.amount.unwrap_or(0.0);
+    if amount_f <= 0.0 {
         return Err(anyhow::anyhow!("amount must be > 0"));
+    }
+
+    // Convert decimal amount to internal atomic units (milli-OWE)
+    // e.g. 1.234 OWE -> 1234 units
+    let amount_units = (amount_f * 1000.0).round() as i64;
+    if amount_units <= 0 {
+        return Err(anyhow::anyhow!("amount too small after conversion"));
     }
 
     // Load wallet and create signed transaction
     let wallet = wallet::load_or_create_wallet(&config.wallet_path)?;
-    let tx = wallet.create_signed_transaction(&to, amount)?;
+    let tx = wallet.create_signed_transaction(&to, amount_units)?;
 
     // Connect to node and submit transaction
     let stream = tokio::net::TcpStream::connect(&config.node_address).await?;
@@ -335,7 +340,7 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
         println!("Node does not recognize 'submittx' - trying peers from node's peer list...");
 
         // Try peers returned by node.getpeers()
-        if let Ok(mut peer_stream) = tokio::net::TcpStream::connect(&config.node_address).await {
+        if let Ok(peer_stream) = tokio::net::TcpStream::connect(&config.node_address).await {
             let (pr, mut pw) = peer_stream.into_split();
             let mut peer_reader = tokio::io::BufReader::new(pr);
             // skip greeting
@@ -349,7 +354,7 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
                     for peer in peers_vec {
                         if peer.is_empty() { continue; }
                         println!("Trying peer {}...", peer);
-                        if let Ok(mut s) = tokio::net::TcpStream::connect(&peer).await {
+                        if let Ok(s) = tokio::net::TcpStream::connect(&peer).await {
                             let (r2, mut w2) = s.into_split();
                             let mut rbuf = tokio::io::BufReader::new(r2);
                             let mut greet = String::new();
