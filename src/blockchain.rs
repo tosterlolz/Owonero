@@ -36,7 +36,7 @@ fn init_scratchpad() -> Vec<u8> {
         .filter(|&v| v >= 1024)
         .unwrap_or(SCRATCHPAD_SIZE);
 
-    let mut buf = vec![0u8; size];
+    let buf = vec![0u8; size];
 
     // Only attempt to enable transparent huge pages when user opts in.
     let try_huge = std::env::var("OWONERO_USE_HUGEPAGES").map(|v| v != "0" && v.to_lowercase() != "false").unwrap_or(false);
@@ -72,6 +72,15 @@ pub struct Block {
     pub hash: String,
     pub nonce: u32,
     pub difficulty: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub from: String,
+    pub pub_key: String,
+    pub to: String,
+    pub amount: i64,
+    pub signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -474,11 +483,11 @@ impl Blockchain {
         // The algorithm is inherently memory-hard due to the 2MB scratchpad usage
         // No precomputation needed as each nonce creates unique memory access patterns
 
-    // To provide responsive hashrate reporting, optionally flush local attempt
-    // counters into a shared atomic counter periodically. This avoids waiting
-    // until a full block is found to report attempts. The threshold may be
-    // configured with OWONERO_MINING_FLUSH (attempts). Default is 64 to
-    // give timely hashrate updates without excessive atomic traffic.
+        // To provide responsive hashrate reporting, optionally flush local attempt
+        // counters into a shared atomic counter periodically. This avoids waiting
+        // until a full block is found to report attempts. The threshold may be
+        // configured with OWONERO_MINING_FLUSH (attempts). Default is 64 to
+        // give timely hashrate updates without excessive atomic traffic.
         let mut flush_chunk: u64 = 0;
         // Number of attempts to buffer before flushing into the shared atomic.
         let flush_threshold: u64 = std::env::var("OWONERO_MINING_FLUSH")
@@ -608,6 +617,3 @@ pub fn verify_transaction_signature(tx: &Transaction, pub_key_hex: &str) -> bool
 
     public_key.verify(message.as_bytes(), &sig_bytes).is_ok()
 }
-// Use x86_64 prefetch intrinsics when available to touch cache lines
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0, _MM_HINT_T1};
