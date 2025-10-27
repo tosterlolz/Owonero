@@ -283,13 +283,44 @@ async fn run_miner_ui_mode() -> anyhow::Result<()> {
 }
 async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     let wallet = wallet::load_or_create_wallet(&config.wallet_path)?;
-    let blockchain = blockchain::Blockchain::load_from_file("blockchain.json")?;
+
+    // Try to sync the local chain from the configured node if enabled.
+    let mut blockchain = blockchain::Blockchain::load_from_file("blockchain.json")?;
+
+    if config.sync_on_startup {
+        if let Ok(stream) = tokio::net::TcpStream::connect(&config.node_address).await {
+            let (r, mut w) = stream.into_split();
+            let mut reader = tokio::io::BufReader::new(r);
+
+            // skip greeting
+            let mut greeting = String::new();
+            let _ = reader.read_line(&mut greeting).await;
+
+            // request chain
+            if w.write_all(b"getchain\n").await.is_ok() {
+                let mut chain_line = String::new();
+                if reader.read_line(&mut chain_line).await.is_ok() {
+                    if let Ok(new_chain) = serde_json::from_str::<crate::blockchain::Blockchain>(chain_line.trim()) {
+                        // If newer, replace local copy and persist
+                        if new_chain.chain.len() > blockchain.chain.len() {
+                            blockchain = new_chain;
+                            let _ = blockchain.save_to_file("blockchain.json");
+                            println!("Synchronized blockchain from node {}", config.node_address);
+                        }
+                    }
+                }
+            }
+        } else {
+            eprintln!("Warning: failed to connect to node {} to sync blockchain", config.node_address);
+        }
+    }
+
     let balance = wallet.get_balance(&blockchain);
 
     println!("{} {}", "Wallet:".blue(), wallet.address);
     println!("{} {}", "Balance:".yellow(), balance);
     println!("{} {}", "Chain height:".cyan(), blockchain.chain.len() - 1);
-    
+
     Ok(())
 }
 
