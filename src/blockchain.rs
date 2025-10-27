@@ -22,7 +22,8 @@ use hex;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub from: String,
-    // public key of the sender (hex)
+    // public key of the sender (hex). Default empty string for backward compatibility
+    #[serde(default)]
     pub pub_key: String,
     pub to: String,
     pub amount: i64,
@@ -415,7 +416,10 @@ pub fn sign_transaction(tx: &mut Transaction, priv_key_hex: &str) -> Result<()> 
 }
 
 pub fn verify_transaction_signature(tx: &Transaction, pub_key_hex: &str) -> bool {
-    let pub_key_bytes = match hex::decode(pub_key_hex) {
+    // If the provided pub_key_hex is empty (older format), fall back to using tx.from
+    let key_hex = if pub_key_hex.is_empty() { &tx.from } else { pub_key_hex };
+
+    let pub_key_bytes = match hex::decode(key_hex) {
         Ok(bytes) => bytes,
         Err(_) => return false,
     };
