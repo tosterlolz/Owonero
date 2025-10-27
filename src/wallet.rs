@@ -51,7 +51,10 @@ impl Wallet {
 
     pub fn create_signed_transaction(&self, to: &str, amount: i64) -> Result<crate::blockchain::Transaction> {
         let mut tx = crate::blockchain::Transaction {
-            from: self.pub_key.clone(),
+            // Use address in `from` for human-readable bookkeeping and balance checks,
+            // and include the public key separately so signature verification can use it.
+            from: self.address.clone(),
+            pub_key: self.pub_key.clone(),
             to: to.to_string(),
             amount,
             signature: String::new(),

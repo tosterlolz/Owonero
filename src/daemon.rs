@@ -129,7 +129,7 @@ async fn handle_connection(
                 let tx: crate::blockchain::Transaction = serde_json::from_str(line.trim())?;
 
                 // Verify signature
-                let valid = crate::blockchain::verify_transaction_signature(&tx, &tx.from);
+                let valid = crate::blockchain::verify_transaction_signature(&tx, &tx.pub_key);
                 if !valid {
                     writer.write_all(b"rejected: invalid signature\n").await?;
                 } else {

@@ -1,7 +1,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
@@ -133,14 +133,37 @@ impl MinerUI {
             // Handle input
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
+                    // Handle quit keys: 'q', Esc, or Ctrl+C
                     match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => {
-                                // signal shutdown to the rest of the program if a sender was provided
-                                if let Some(ref tx) = shutdown_tx {
-                                    let _ = tx.send(true);
-                                }
-                                break;
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            // Signal shutdown to the rest of the program if a sender was provided
+                            if let Some(ref tx) = shutdown_tx {
+                                let _ = tx.send(true);
                             }
+
+                            // As a safety-net, schedule a forced process exit after a short grace
+                            // period so background threads/tasks that don't properly listen to
+                            // the shutdown channel won't keep the process alive.
+                            // Give a small grace so other tasks can shutdown cleanly.
+                            let _ = tokio::spawn(async {
+                                sleep(Duration::from_millis(500)).await;
+                                std::process::exit(0);
+                            });
+
+                            break;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(ref tx) = shutdown_tx {
+                                let _ = tx.send(true);
+                            }
+
+                            let _ = tokio::spawn(async {
+                                sleep(Duration::from_millis(500)).await;
+                                std::process::exit(0);
+                            });
+
+                            break;
+                        }
                         KeyCode::Char('c') => {
                             self.logs.clear();
                         }

@@ -22,6 +22,8 @@ use hex;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub from: String,
+    // public key of the sender (hex)
+    pub pub_key: String,
     pub to: String,
     pub amount: i64,
     pub signature: String,
@@ -58,6 +60,7 @@ impl Blockchain {
             timestamp: "2025-10-11T00:00:00Z".parse().unwrap(),
             transactions: vec![Transaction {
                 from: "genesis".to_string(),
+                pub_key: String::new(),
                 to: "network".to_string(),
                 amount: 0,
                 signature: "".to_string(),
@@ -276,7 +279,7 @@ impl Blockchain {
                 // Coinbase transactions don't need signatures
                 continue;
             }
-            if !verify_transaction_signature(tx, &tx.from) {
+            if !verify_transaction_signature(tx, &tx.pub_key) {
                 eprintln!("Block {} validation failed: Invalid transaction signature for tx from {} to {}", block.index, tx.from, tx.to);
                 return false;
             }

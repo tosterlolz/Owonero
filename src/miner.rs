@@ -370,6 +370,7 @@ pub async fn start_mining(
 
                 let coinbase = Transaction {
                     from: "coinbase".to_string(),
+                    pub_key: String::new(),
                     to: wallet.address.clone(),
                     amount: 1,
                     signature: String::new(),
