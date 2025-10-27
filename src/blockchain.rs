@@ -289,6 +289,71 @@ impl Blockchain {
         true
     }
 
+    /// Validate a block but return a textual error describing the first failure, if any.
+    pub fn validate_block_verbose(&self, block: &Block, difficulty: u32, skip_pow: bool) -> Option<String> {
+        if self.chain.is_empty() {
+            // Genesis validation
+            if block.index != 0 {
+                return Some(format!("Genesis block validation failed: Index must be 0, got {}", block.index));
+            }
+            if !block.prev_hash.is_empty() {
+                return Some(format!("Genesis block validation failed: PrevHash must be empty, got {}", block.prev_hash));
+            }
+            if Self::calculate_hash(block) != block.hash {
+                return Some("Genesis block validation failed: Hash mismatch".to_string());
+            }
+            return None;
+        }
+
+        let last = &self.chain[self.chain.len() - 1];
+        if block.prev_hash != last.hash {
+            return Some(format!("PrevHash mismatch: expected {} got {}", last.hash, block.prev_hash));
+        }
+        if Self::calculate_hash(block) != block.hash {
+            return Some("Hash mismatch".to_string());
+        }
+        if block.index != last.index + 1 {
+            return Some(format!("Index mismatch: expected {} got {}", last.index + 1, block.index));
+        }
+
+        if !skip_pow {
+            // Check PoW
+            let hash_bytes = hex::decode(&block.hash).unwrap_or_default();
+            let mut valid_pow = true;
+            for i in 0..((difficulty + 1) / 2) {
+                let byte_idx = i as usize;
+                if byte_idx >= hash_bytes.len() {
+                    break;
+                }
+                let byte_val = hash_bytes[byte_idx];
+                if difficulty > i * 2 && byte_val >> 4 != 0 {
+                    valid_pow = false;
+                    break;
+                }
+                if difficulty > i * 2 + 1 && (byte_val & 0x0F) != 0 {
+                    valid_pow = false;
+                    break;
+                }
+            }
+            if !valid_pow {
+                return Some("PoW check failed".to_string());
+            }
+        }
+
+        // Validate transaction signatures
+        for tx in &block.transactions {
+            if tx.from == "coinbase" {
+                // Coinbase transactions don't need signatures
+                continue;
+            }
+            if !verify_transaction_signature(tx, &tx.pub_key) {
+                return Some(format!("Invalid transaction signature for tx from {} to {}", tx.from, tx.to));
+            }
+        }
+
+        None
+    }
+
     pub fn add_block(&mut self, block: Block, difficulty: u32) -> bool {
         self.add_block_skip_pow(block, difficulty, false)
     }

@@ -93,22 +93,30 @@ async fn handle_connection(
                 reader.read_line(&mut line).await?;
                 let block: crate::blockchain::Block = serde_json::from_str(line.trim())?;
 
-                let result = {
+                // Do a verbose validation to provide the miner a clearer rejection reason
+                let response = {
                     let mut bc = blockchain.lock().unwrap();
                     let dyn_diff = bc.get_dynamic_difficulty();
-                    bc.add_block(block, dyn_diff)
+
+                    if let Some(err) = bc.validate_block_verbose(&block, dyn_diff, false) {
+                        format!("rejected: {}", err)
+                    } else {
+                        // validation passed, add block
+                        let added = bc.add_block(block, dyn_diff);
+                        if added {
+                            // Save blockchain
+                            if let Err(e) = bc.save_to_file("blockchain.json") {
+                                eprintln!("Failed to save blockchain: {}", e);
+                            }
+                            String::from("ok")
+                        } else {
+                            String::from("error: failed to add block")
+                        }
+                    }
                 };
 
-                if result {
-                    // Save blockchain
-                    {
-                        let bc = blockchain.lock().unwrap();
-                        bc.save_to_file("blockchain.json")?;
-                    }
-                    writer.write_all(b"ok\n").await?;
-                } else {
-                    writer.write_all(b"error: block invalid\n").await?;
-                }
+                // Send response after lock is released
+                writer.write_all(format!("{}\n", response).as_bytes()).await?;
             }
             "getpeers" => {
                 let peers = _pm.get_peers();
