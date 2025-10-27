@@ -1163,6 +1163,7 @@ dependencies = [
  "crossterm",
  "futures",
  "hex",
+ "libc",
  "rand",
  "ratatui",
  "reqwest",

@@ -24,6 +24,7 @@ colored = "2.0"
 ratatui = "0.26"
 crossterm = "0.27"
 semver = "1.0"
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
