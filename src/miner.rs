@@ -44,25 +44,55 @@ pub async fn start_mining(
         println!("Mining for wallet {} to node {}", wallet.address, node_addr);
     }
 
-    // Connect to node
-    let stream = TcpStream::connect(node_addr).await?;
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-
-    // Read greeting
+    // Try to connect to node and fetch the authoritative chain. If the node
+    // is unreachable or returns invalid data, fall back to the local
+    // `blockchain.json` (or create a new chain). This lets mining continue
+    // in solo/offline scenarios instead of failing outright.
     let mut greeting = String::new();
-    reader.read_line(&mut greeting).await?;
-    if let Some(ref tx) = log_tx {
-        let _ = tx.send(format!("Connected to node: {}", greeting.trim())).await;
-    } else {
-        // idk what to do here so yk
-    }
+    let blockchain: Blockchain = match TcpStream::connect(node_addr).await {
+        Ok(stream) => {
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            // Try to read greeting (ignore errors)
+            let _ = reader.read_line(&mut greeting).await;
+            if let Some(ref tx) = log_tx {
+                let _ = tx.send(format!("Connected to node: {}", greeting.trim())).await;
+            }
 
-    // Get current chain
-    writer.write_all(b"getchain\n").await?;
-    let mut chain_data = String::new();
-    reader.read_line(&mut chain_data).await?;
-    let blockchain: Blockchain = serde_json::from_str(&chain_data.trim())?;
+            // Request chain from node
+            if writer.write_all(b"getchain\n").await.is_ok() {
+                let mut chain_data = String::new();
+                if reader.read_line(&mut chain_data).await.is_ok() {
+                    if let Ok(bc) = serde_json::from_str::<Blockchain>(chain_data.trim()) {
+                        bc
+                    } else {
+                        if let Some(ref tx) = log_tx {
+                            let _ = tx.send("Failed to parse chain from node; using local chain".to_string()).await;
+                        }
+                        Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
+                    }
+                } else {
+                    if let Some(ref tx) = log_tx {
+                        let _ = tx.send("Failed to read chain from node; using local chain".to_string()).await;
+                    }
+                    Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
+                }
+            } else {
+                if let Some(ref tx) = log_tx {
+                    let _ = tx.send("Failed to request chain from node; using local chain".to_string()).await;
+                }
+                Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
+            }
+        }
+        Err(_) => {
+            if let Some(ref tx) = log_tx {
+                let _ = tx.send(format!("Could not connect to node {} - using local chain", node_addr)).await;
+            } else {
+                eprintln!("Could not connect to node {} - using local chain", node_addr);
+            }
+            Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
+        }
+    };
 
     let blockchain = Arc::new(Mutex::new(blockchain));
     // Shared mempool (kept in sync with node via poller)
@@ -280,8 +310,10 @@ pub async fn start_mining(
         let accepted = accepted.clone();
         let rejected = rejected.clone();
         let start_time = start_time.clone();
+        let log_tx = log_tx.clone();
         Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut zero_streak: u32 = 0;
             loop {
                 interval.tick().await;
 
@@ -305,9 +337,17 @@ pub async fn start_mining(
                     history.iter().cloned().collect()
                 };
 
-                let avg_min = history_clone.iter().rev().take(60).sum::<u64>() as f64 / 60.0;
-                let avg_hour = history_clone.iter().rev().take(3600).sum::<u64>() as f64 / 3600.0;
-                let avg_day = history_clone.iter().sum::<u64>() as f64 / history_clone.len() as f64;
+                // Compute averages using the actual number of available samples
+                let samples_min = std::cmp::min(60, history_clone.len());
+                let samples_hour = std::cmp::min(3600, history_clone.len());
+
+                let sum_min: u64 = history_clone.iter().rev().take(samples_min).sum();
+                let sum_hour: u64 = history_clone.iter().rev().take(samples_hour).sum();
+                let sum_day: u64 = history_clone.iter().sum();
+
+                let avg_min = if samples_min > 0 { sum_min as f64 / samples_min as f64 } else { 0.0 };
+                let avg_hour = if samples_hour > 0 { sum_hour as f64 / samples_hour as f64 } else { 0.0 };
+                let avg_day = if history_clone.len() > 0 { sum_day as f64 / history_clone.len() as f64 } else { 0.0 };
 
                 let stats = MinerStats {
                     total_hps: h,
@@ -323,8 +363,22 @@ pub async fn start_mining(
                     uptime,
                     pool_mode: pool,
                 };
-
+                // Send stats to UI
                 let _ = tx.send(stats).await;
+
+                // Emit occasional debug log when attempts are zero to help diagnose
+                // why hashrate may show 0 H/s. Send logs at most once every 5 seconds
+                // while the zero condition persists to avoid spamming the UI.
+                if h == 0 {
+                    zero_streak = zero_streak.saturating_add(1);
+                    if zero_streak % 5 == 0 {
+                        if let Some(ref lt) = log_tx {
+                            let _ = lt.send(format!("DEBUG: swapped attempts = {}", h)).await;
+                        }
+                    }
+                } else {
+                    zero_streak = 0;
+                }
             }
         }))
     } else {

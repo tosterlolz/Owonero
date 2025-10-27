@@ -1,35 +1,68 @@
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
 use std::env;
+use std::time::{Duration, Instant};
 use std::cell::RefCell;
-
-// RX/OWO Parameters (module-level so they can be reused without reallocating)
-const SCRATCHPAD_SIZE: usize = 2 * 1024 * 1024; // 2MB scratchpad (like RandomX)
-const DEFAULT_ITERATIONS: usize = 1024; // Number of computational iterations
-const L1_CACHE_SIZE: usize = 16 * 1024; // 16KB L1 cache simulation
-const L2_CACHE_SIZE: usize = 256 * 1024; // 256KB L2 cache simulation
-
-thread_local! {
-    // Reusable per-thread scratchpad to avoid allocating 2MB each hash
-    static SCRATCHPAD_BUF: RefCell<Vec<u8>> = RefCell::new(vec![0u8; SCRATCHPAD_SIZE]);
-}
 use chrono::{DateTime, Utc};
 use std::fs;
 use anyhow::{Result, anyhow};
 use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use hex;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    // public key of the sender (hex). Default empty string for backward compatibility
-    #[serde(default)]
-    pub pub_key: String,
-    pub to: String,
-    pub amount: i64,
-    pub signature: String,
+// RandomX-inspired RX/OWO Parameters (module-level so they can be reused without reallocating)
+// These defaults are conservative; they can be tuned with environment variables
+// to trade CPU work vs latency and to attempt hugepage usage.
+const SCRATCHPAD_SIZE: usize = 2 * 1024 * 1024; // Default: 2MB scratchpad (RandomX-like)
+const DEFAULT_ITERATIONS: usize = 2048; // Default iterations; tuned for reasonable CPU work
+const L1_CACHE_SIZE: usize = 16 * 1024; // 16KB L1 cache simulation
+const L2_CACHE_SIZE: usize = 256 * 1024; // 256KB L2 cache simulation
+
+thread_local! {
+    // Reusable per-thread scratchpad to avoid allocating 2MB each hash.
+    // We attempt to enable huge pages (transparent hugepages via madvise) when
+    // the environment variable `OWONERO_USE_HUGEPAGES=1` is set. If enabled but
+    // the kernel does not support it, we silently fall back to normal pages.
+    static SCRATCHPAD_BUF: RefCell<Vec<u8>> = RefCell::new(init_scratchpad());
 }
 
+// NOTE: the cancellable mining helper is implemented as an associated
+// function on `Blockchain` below. Keeping a single implementation avoids
+// duplication and potential name-resolution/visibility confusion.
+
+fn init_scratchpad() -> Vec<u8> {
+    // Allow adjusting scratchpad size with environment variable (bytes)
+    let size = std::env::var("OWONERO_SCRATCHPAD_SIZE").ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&v| v >= 1024)
+        .unwrap_or(SCRATCHPAD_SIZE);
+
+    let mut buf = vec![0u8; size];
+
+    // Only attempt to enable transparent huge pages when user opts in.
+    let try_huge = std::env::var("OWONERO_USE_HUGEPAGES").map(|v| v != "0" && v.to_lowercase() != "false").unwrap_or(false);
+    if try_huge {
+        #[cfg(target_os = "linux")]
+        {
+            use std::io;
+            unsafe {
+                let ret = libc::madvise(buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MADV_HUGEPAGE);
+                if ret == 0 {
+                    eprintln!("OWONERO: attempted MADV_HUGEPAGE for scratchpad ({} bytes)", buf.len());
+                } else {
+                    let err = io::Error::last_os_error();
+                    eprintln!("OWONERO: MADV_HUGEPAGE failed: {}. Falling back to normal pages.", err);
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            eprintln!("OWONERO: OWONERO_USE_HUGEPAGES=1 set on Windows, but automatic large page allocation is not implemented; falling back to normal pages.");
+        }
+    }
+
+    buf
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
@@ -96,17 +129,28 @@ impl Blockchain {
 
         let seed = sha3::Sha3_256::digest(&block_bytes);
 
-        // Use a reusable thread-local scratchpad to avoid reallocations
+        // Use a reusable thread-local scratchpad to avoid reallocations and operate
+        // on u64 words for better throughput.
         let result_hash = SCRATCHPAD_BUF.with(|buf| {
             let mut scratchpad = buf.borrow_mut();
+
+            // Ensure scratchpad len is a multiple of 8 for safe u64 views
+            let sp_len = scratchpad.len();
 
             // Initialize RNG state from seed
             let mut rng_state = u64::from_le_bytes(seed[0..8].try_into().unwrap());
 
-            // Fill scratchpad with pseudo-random data (overwrite previous contents)
-            for i in 0..SCRATCHPAD_SIZE {
-                rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-                scratchpad[i] = (rng_state >> 32) as u8;
+            // Fill scratchpad with pseudo-random data (word-wise) for faster writes
+            unsafe {
+                let ptr = scratchpad.as_mut_ptr() as *mut u64;
+                let words = sp_len / 8;
+                for i in 0..words {
+                    rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    // spread bits to 64-bit value
+                    let v = (rng_state >> 1) ^ (rng_state << 33);
+                    ptr.add(i).write_unaligned(v.to_le());
+                }
+                // If there are leftover bytes (unlikely when size multiple of 8), leave them
             }
 
             // RX/OWO Main Loop - Memory-hard computation
@@ -114,56 +158,58 @@ impl Blockchain {
             let mut b = u64::from_le_bytes(seed[16..24].try_into().unwrap());
             let mut c = u64::from_le_bytes(seed[24..32].try_into().unwrap());
 
-            for iteration in 0..iterations {
-                // Memory access pattern 1: Random access with complex addressing
-                let addr1 = ((a.wrapping_add(b).wrapping_mul(c)) % (SCRATCHPAD_SIZE as u64 / 8)) as usize * 8;
-                let mem_val1 = u64::from_le_bytes(scratchpad[addr1..addr1+8].try_into().unwrap());
+            // Operating on u64 words reduces bounds checks and increases throughput.
+            let sp_words = sp_len / 8;
+            unsafe {
+                let sp_ptr = scratchpad.as_mut_ptr() as *mut u64;
+                for iteration in 0..iterations {
+                    // Memory access pattern 1: Random word access
+                    let idx1 = ((a.wrapping_add(b).wrapping_mul(c)) % (sp_words as u64)) as usize;
+                    let mem_val1 = sp_ptr.add(idx1).read_unaligned();
 
-                // Memory access pattern 2: Sequential with offset
-                let addr2 = ((iteration * 64) + (a as usize % 1024)) % SCRATCHPAD_SIZE;
-                let mem_val2 = scratchpad[addr2] as u64;
+                    // Memory access pattern 2: Sequential with offset (byte-level offset folded into word index)
+                    let idx2 = (((iteration as usize * 8) + (a as usize % 1024)) % sp_len) / 8;
+                    let mem_val2 = sp_ptr.add(idx2).read_unaligned();
 
-                // Memory access pattern 3: touch an L1-resident cache line (use prefetch hint if available)
-                let l1_addr = (a % (L1_CACHE_SIZE as u64 / 8)) as usize * 8;
-                #[cfg(target_arch = "x86_64")]
-                unsafe {
-                    // prefetch into L1 (T0)
-                    let p = scratchpad.as_ptr().add(l1_addr) as *const i8;
-                    _mm_prefetch(p, _MM_HINT_T0);
-                }
-                let l1_val = u64::from_le_bytes(scratchpad[l1_addr..l1_addr+8].try_into().unwrap());
+                    // Prefetch hints where available
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        use core::arch::x86_64::_mm_prefetch;
+                        use core::arch::x86_64::_MM_HINT_T0;
+                        let p = sp_ptr.add(idx1) as *const i8;
+                        _mm_prefetch(p, _MM_HINT_T0);
+                    }
 
-                // Memory access pattern 4: touch an L2-resident cache line (use prefetch hint if available)
-                let l2_addr = ((b % (L2_CACHE_SIZE as u64 / 8)) as usize * 8) % SCRATCHPAD_SIZE;
-                #[cfg(target_arch = "x86_64")]
-                unsafe {
-                    // prefetch into L2 (T1) — hint, actual behavior depends on CPU
-                    let p2 = scratchpad.as_ptr().add(l2_addr) as *const i8;
-                    _mm_prefetch(p2, _MM_HINT_T1);
-                }
-                let l2_val = u64::from_le_bytes(scratchpad[l2_addr..l2_addr+8].try_into().unwrap());
+                    // Touch L1/L2 simulated addresses
+                    let l1_idx = (a % (L1_CACHE_SIZE as u64 / 8)) as usize % sp_words;
+                    let l1_val = sp_ptr.add(l1_idx).read_unaligned();
 
-                // Complex arithmetic operations (ASIC-resistant)
-                a = a.wrapping_mul(mem_val1).wrapping_add(l1_val);
-                b = (b ^ mem_val2).wrapping_sub(l2_val);
-                c = c.rotate_left((mem_val1 % 64) as u32).wrapping_add(a ^ b);
+                    let l2_idx = ((b % (L2_CACHE_SIZE as u64 / 8)) as usize) % sp_words;
+                    let l2_val = sp_ptr.add(l2_idx).read_unaligned();
 
-                // Non-linear operations
-                a ^= (a >> 17) | (a << 47); // Bit rotation
-                b ^= (b >> 23) | (b << 41);
-                c ^= (c >> 29) | (c << 35);
+                    // Mix operations - designed to keep CPU busy and to have memory-dependent
+                    // data-dependent addressing (RandomX-like)
+                    a = a.wrapping_mul(mem_val1).wrapping_add(l1_val);
+                    b = (b ^ mem_val2).wrapping_sub(l2_val);
+                    c = c.rotate_left((mem_val1 % 64) as u32).wrapping_add(a ^ b);
 
-                // Memory write-back (modify scratchpad)
-                let write_addr = ((a ^ b ^ c) % (SCRATCHPAD_SIZE as u64 / 8)) as usize * 8;
-                let write_val = (a.wrapping_add(b).wrapping_mul(c)).to_le_bytes();
-                scratchpad[write_addr..write_addr+8].copy_from_slice(&write_val);
+                    // Non-linear mixing
+                    a ^= a.rotate_right(17);
+                    b ^= b.rotate_right(23);
+                    c ^= c.rotate_right(29);
 
-                // Additional entropy from block data
-                if iteration % 128 == 0 {
-                    let block_byte = block_bytes.get(iteration % block_bytes.len()).unwrap_or(&0);
-                    a ^= *block_byte as u64;
-                    b ^= (*block_byte as u64).rotate_left(8);
-                    c ^= (*block_byte as u64).rotate_left(16);
+                    // Memory write-back (modify scratchpad)
+                    let write_idx = ((a ^ b ^ c) % (sp_words as u64)) as usize;
+                    let write_val = a.wrapping_add(b).wrapping_mul(c);
+                    sp_ptr.add(write_idx).write_unaligned(write_val.to_le());
+
+                    // Additional entropy from block data occasionally
+                    if iteration & 127 == 0 {
+                        let block_byte = *block_bytes.get(iteration % block_bytes.len()).unwrap_or(&0);
+                        a ^= block_byte as u64;
+                        b ^= (block_byte as u64).rotate_left(8);
+                        c ^= (block_byte as u64).rotate_left(16);
+                    }
                 }
             }
 
@@ -397,7 +443,21 @@ impl Blockchain {
 
     // Make mine_block an associated function that does not take a lock on the blockchain.
     // This lets miners compute blocks in parallel without holding the chain mutex.
-    pub fn mine_block(prev_block: &Block, transactions: Vec<Transaction>, difficulty: u32, attempts: &mut u64, attempts_atomic: Option<&std::sync::atomic::AtomicU64>) -> Block {
+    /// Mine a block using the given template. The function will periodically
+    /// check `attempts_atomic` to flush local attempt counters and will also
+    /// check `chain_version` (if provided) to abort mining early when the
+    /// local chain version changes (so workers stop working on stale templates).
+    ///
+    /// Returns `Some(Block)` when a valid block is found, or `None` when
+    /// mining was aborted due to a chain version update.
+    pub fn mine_block_with_cancel(
+        prev_block: &Block,
+        transactions: Vec<Transaction>,
+        difficulty: u32,
+        attempts: &mut u64,
+        attempts_atomic: Option<&std::sync::atomic::AtomicU64>,
+        chain_version: Option<&std::sync::atomic::AtomicU64>,
+    ) -> Option<Block> {
         let target_prefix = "0".repeat(difficulty as usize);
 
         let mut block = Block {
@@ -414,16 +474,30 @@ impl Blockchain {
         // The algorithm is inherently memory-hard due to the 2MB scratchpad usage
         // No precomputation needed as each nonce creates unique memory access patterns
 
-        // To provide responsive hashrate reporting, optionally flush local attempt
-        // counters into a shared atomic counter periodically. This avoids waiting
-        // until a full block is found to report attempts. The threshold may be
-        // configured with OWONERO_MINING_FLUSH (attempts). Default is 1024.
+    // To provide responsive hashrate reporting, optionally flush local attempt
+    // counters into a shared atomic counter periodically. This avoids waiting
+    // until a full block is found to report attempts. The threshold may be
+    // configured with OWONERO_MINING_FLUSH (attempts). Default is 64 to
+    // give timely hashrate updates without excessive atomic traffic.
         let mut flush_chunk: u64 = 0;
+        // Number of attempts to buffer before flushing into the shared atomic.
         let flush_threshold: u64 = std::env::var("OWONERO_MINING_FLUSH")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .filter(|&v| v > 0)
-            .unwrap_or(1024);
+            .unwrap_or(64);
+        // Also flush at least every X milliseconds to keep hashrate reporting
+        // timely when attempt rate is low. Configurable via
+        // OWONERO_MINING_FLUSH_MS (milliseconds). Default 250ms.
+        let flush_interval_ms: u64 = std::env::var("OWONERO_MINING_FLUSH_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(250);
+        let mut last_flush = Instant::now();
+
+        // Snapshot chain version at start; if it changes we abort.
+        let start_version = chain_version.map(|v| v.load(std::sync::atomic::Ordering::Relaxed));
 
         loop {
             block.hash = Self::calculate_hash(&block);
@@ -431,13 +505,14 @@ impl Blockchain {
             flush_chunk += 1;
 
             // Periodically flush into the shared atomic counter if provided.
-            if let Some(at) = attempts_atomic {
-                if flush_chunk >= flush_threshold {
-                    at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
-                    // reset chunk after flushing
-                    flush_chunk = 0;
+                if let Some(at) = attempts_atomic {
+                    if flush_chunk >= flush_threshold || last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
+                        at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
+                        // reset chunk after flushing
+                        flush_chunk = 0;
+                        last_flush = Instant::now();
+                    }
                 }
-            }
 
             // Check if hash meets difficulty
             if block.hash.starts_with(&target_prefix) {
@@ -447,13 +522,44 @@ impl Blockchain {
                         at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
-                break;
+                return Some(block);
+            }
+
+            // Periodically check whether the chain version changed; if so,
+            // abort mining this template to avoid PrevHash mismatches.
+            if let Some(v) = chain_version {
+                let cur = v.load(std::sync::atomic::Ordering::Relaxed);
+                if Some(cur) != start_version {
+                    // Optionally flush remaining attempts before aborting
+                    if let Some(at) = attempts_atomic {
+                        if flush_chunk > 0 {
+                            at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                    return None;
+                }
             }
 
             block.nonce += 1;
         }
+    }
 
-        block
+    /// Backwards-compatible wrapper kept for callers that expect the old
+    /// synchronous behaviour. This will block until a valid block is found
+    /// and will not return early on chain updates.
+    pub fn mine_block(
+        prev_block: &Block,
+        transactions: Vec<Transaction>,
+        difficulty: u32,
+        attempts: &mut u64,
+        attempts_atomic: Option<&std::sync::atomic::AtomicU64>,
+    ) -> Block {
+        // Call the cancellable variant with no chain_version so it behaves
+        // like the original function and will not abort early.
+        match Self::mine_block_with_cancel(prev_block, transactions, difficulty, attempts, attempts_atomic, None) {
+            Some(b) => b,
+            None => panic!("mine_block unexpectedly aborted when no chain_version provided"),
+        }
     }
 }
 

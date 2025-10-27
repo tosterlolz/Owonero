@@ -27,7 +27,7 @@ const ASCII_LOGO: &str = r#"
 ⣧⠈⡄⠈⣿⡜⢱⣶⣦⠀⠀⢠⠆⠀⣁⣀⠘⢸⠀⢸⠀⡄⠀⠀⡆⠀⠠⡀⠃  | |  | |\ \/  \/ / |  __|
 ⢻⣷⡡⢣⣿⠃⠘⠿⠏⠀⠀⠀⠂⠀⣿⣿⣿⡇⠀⡀⣰⡗⠄⡀⠰⠀⠀⠀⠀  | |__| | \  /\  /  | |____
 ⠀⠙⢿⣜⢻⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠋⢁⢡⠀⡷⣿⠁⠈⠋⠢⢇⠀⡀⠀  \_____/   \/  \/   |______|
-⠀⠀⠈⢻⠀⡆⠀⠀⠀⠀⠀⠀⠀⠀⠐⠆⡘⡇⠀⣼⣿⡇⢀⠀⠀⠀⢱⠁⠀                              V.0.4.0
+⠀⠀⠈⢻⠀⡆⠀⠀⠀⠀⠀⠀⠀⠀⠐⠆⡘⡇⠀⣼⣿⡇⢀⠀⠀⠀⢱⠁⠀                              V.%s
 ⠐⢦⣀⠸⡀⢸⣦⣄⡀⠒⠄⠀⠀⠀⢀⣀⣴⠀⣸⣿⣿⠁⣼⢦⠀⠀⠘⠀
 ⠀⠀⢎⠳⣇⠀⢿⣿⣿⣶⣤⡶⣾⠿⠋⣁⡆⡰⢿⣿⣿⡜⢣⠀⢆⡄⠇⠀
 ⠀⠀⠈⡄⠈⢦⡘⡇⠟⢿⠙⡿⢀⠐⠁⢰⡜⠀⠀⠙⢿⡇⠀⡆⠈⡟⠀⠀
@@ -103,8 +103,10 @@ impl MinerUI {
                 ])
                 .split(size);
 
-            // Header with logo
-            let header = Paragraph::new(ASCII_LOGO)
+            // Header with logo (inject build version/commit)
+            let full_version = format!("v{}=>{}", env!("CARGO_PKG_VERSION"), option_env!("GIT_HASH_SHORT").unwrap_or("unknown"));
+            let logo = ASCII_LOGO.replace("%s", &full_version);
+            let header = Paragraph::new(logo)
                 .block(Block::default().borders(Borders::ALL).title("OWONERO MINER"))
                 .style(Style::default().fg(Color::Cyan));
             f.render_widget(header, chunks[0]);
