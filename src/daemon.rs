@@ -3,6 +3,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use crate::blockchain::Blockchain;
+use anyhow::anyhow;
 
 pub struct PeerManager {
     peers: Mutex<Vec<String>>,
@@ -110,6 +111,51 @@ async fn handle_connection(
                 let peers = _pm.get_peers();
                 let peers_json = serde_json::to_string(&peers)?;
                 writer.write_all(format!("{}\n", peers_json).as_bytes()).await?;
+            }
+            "submitshare" => {
+                // Read next line for share JSON
+                line.clear();
+                reader.read_line(&mut line).await?;
+
+                let v: serde_json::Value = serde_json::from_str(line.trim())?;
+                // Extract fields
+                let wallet_addr = v.get("wallet").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                let attempts_val = v.get("attempts").and_then(|n| n.as_u64()).unwrap_or(0);
+                let block_val = v.get("block").cloned().ok_or_else(|| anyhow!("missing block field"))?;
+                let block: crate::blockchain::Block = serde_json::from_value(block_val)?;
+
+                let response = {
+                    let mut bc = blockchain.lock().unwrap();
+                    let dyn_diff = bc.get_dynamic_difficulty();
+
+                    // Basic prev_hash check
+                    let last_hash = bc.chain.last().unwrap().hash.clone();
+                    if block.prev_hash != last_hash {
+                        String::from("rejected: prev_hash_mismatch")
+                    } else if bc.validate_block(&block, block.difficulty, false) {
+                        // If this share meets full network difficulty, treat as a mined block
+                        if block.difficulty >= dyn_diff {
+                            let added = bc.add_block(block, dyn_diff);
+                            if added {
+                                bc.save_to_file("blockchain.json")?;
+                                String::from("ok")
+                            } else {
+                                String::from("error: failed to add block")
+                            }
+                        } else {
+                            // It's a valid share for pool difficulty — record it and acknowledge
+                            let mut map = _shares.lock().unwrap();
+                            let entry = map.entry(wallet_addr.clone()).or_insert(0);
+                            *entry += attempts_val as i64;
+                            String::from("ok")
+                        }
+                    } else {
+                        String::from("rejected: invalid share")
+                    }
+                };
+
+                // Send response after lock is released
+                writer.write_all(format!("{}\n", response).as_bytes()).await?;
             }
             _ => {
                 writer.write_all(b"unknown command\n").await?;

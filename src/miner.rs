@@ -211,7 +211,7 @@ pub async fn start_mining(
     });
 
     // Forwarder threads: move from std channels into tokio mpsc so workers never block
-    let block_forwarder = {
+    let _block_forwarder = {
         let block_tx = block_tx.clone();
         std::thread::spawn(move || {
             while let Ok(block) = block_sync_rx.recv() {
@@ -221,7 +221,7 @@ pub async fn start_mining(
         })
     };
 
-    let share_forwarder = {
+    let _share_forwarder = {
         let share_tx = share_tx.clone();
         std::thread::spawn(move || {
             while let Ok(share) = share_sync_rx.recv() {

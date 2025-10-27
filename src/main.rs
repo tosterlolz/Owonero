@@ -31,7 +31,7 @@ const ASCII_LOGO: &str = r#"
 
 #[derive(Parser)]
 #[command(name = "owonero-rs")]
-#[command(version = "0.4.0")]
+#[command(version = "0.4.1")]
 #[command(about = "Owonero cryptocurrency miner/daemon")]
 struct Cli {
     /// Run as daemon

@@ -261,7 +261,16 @@ echo "getheight" | nc localhost 6969
 echo "getpeers" | nc localhost 6969
 ```
 
-## 🔒 Security
+## � Documentation
+
+More detailed developer and build documentation is available in the `docs/` directory:
+
+- `docs/BUILD.md` — step-by-step build instructions for Linux, WSL, macOS, and notes for Windows users.
+- `docs/TROUBLESHOOTING.md` — common build/runtime issues and fixes (OpenSSL, WSL, hashrate stalls).
+
+If you'd like, we can add a Dockerfile and CI workflow to produce reproducible release artifacts.
+
+## �🔒 Security
 
 - **Private Keys**: Never share your wallet files
 - **Network**: Use firewall to restrict access to daemon port
