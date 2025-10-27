@@ -2,6 +2,8 @@
 
 ![banner](./assets/owe.png)
 
+Current release: v0.4.1
+
 A lightweight, proof-of-work blockchain cryptocurrency written in Rust. Features automatic updates, peer-to-peer networking, and efficient mining with the RX/OWO memory-hard algorithm.
 
 IMPORTANT: Windows users — we publish release binaries on GitHub releases. If you are on Windows we recommend downloading the pre-built release for convenience and correctness.
@@ -41,13 +43,7 @@ IMPORTANT: Windows users — we publish release binaries on GitHub releases. If 
 
 ### 1. Download and Install
 
-#### Option A: Download Pre-built Binary
-```bash
-# Download latest release from GitHub
-curl -L https://github.com/tosterlolz/Owonero/releases/latest/download/owonero-linux-amd64.zip -o owonero.zip
-unzip owonero.zip
-chmod +x owonero
-```
+#### Option A: Download Pre-built Binary from [releases](https://github.com/tosterlolz/Owonero/releases)
 
 #### Option B: Build from Source
 ```bash
@@ -57,18 +53,16 @@ cd Owonero
 
 # Build for your platform
 cargo build --release                    # Release build
-# OR
-./build.ps1                              # Windows PowerShell build script
 ```
 
 ### 2. Start Your First Node
 
 ```bash
 # Start daemon (network node)
-./owonero -d -p 6969
+./target/release/owonero-rs -d
 
 # Or connect to existing network
-./owonero -d -n owonero.yabai.buzz:6969 -p 6969
+./target/release/owonero-rs  -d -n owonero.yabai.buzz:6969
 ```
 
 ## 🔨 RX/OWO Mining Algorithm
@@ -81,7 +75,7 @@ Owonero uses the **RX/OWO** algorithm, a custom memory-hard proof-of-work system
 - **Complex Memory Access**: Pseudo-random memory reads/writes with multiple cache levels
 - **ASIC-Resistant Operations**: Bit rotations, multiplications, and non-linear arithmetic
 - **Dynamic Entropy**: Block data influences memory access patterns
-- **1024 Iterations**: Multiple computational rounds per hash
+- **2048 Iterations**: Multiple computational rounds per hash (current default in code)
 
 ### Mining Performance
 
@@ -100,20 +94,20 @@ The algorithm scales well with:
 
 ```bash
 # Solo mining with 8 threads
-./owonero --mine --node localhost:6969 --threads 8
+./target/release/owonero-rs --mine --node localhost:6969 --threads 8
 
 # Pool mining (if supported)
-./owonero --mine --pool --node pool.example.com:6969 --threads 8
+./target/release/owonero-rs  --mine --pool --node pool.example.com:6969 --threads 8
 
 # Mining with TUI interface
-./owonero --mine --miner-ui --node localhost:6969 --threads 4
+./target/release/owonero-rs  --mine --miner-ui --node localhost:6969 --threads 4
 ```
 
 ### 4. Check Your Wallet
 
 ```bash
 # View balance and address
-./owonero
+./target/release/owonero-rs 
 ```
 
 ## 📖 Usage Guide
@@ -122,7 +116,7 @@ The algorithm scales well with:
 
 #### Daemon Mode
 ```bash
-./owonero -d [options]
+./target/release/owonero-rs  -d [options]
 ```
 - `-d`: Run as network daemon
 - `-p PORT`: Listening port (default: 6969)
@@ -133,7 +127,7 @@ The algorithm scales well with:
 
 #### Mining Mode
 ```bash
-./owonero -m [options]
+./target/release/owonero-rs  -m [options]
 ```
 - `-m`: Start mining
 - `-n HOST:PORT`: Node to submit blocks to
@@ -143,7 +137,7 @@ The algorithm scales well with:
 
 #### Wallet Mode
 ```bash
-./owonero [options]
+./target/release/owonero-rs  [options]
 ```
 - `-w FILE`: Custom wallet file
 - `-tui`: Launch terminal user interface
@@ -245,7 +239,7 @@ RUST_LOG=debug cargo run -- --help
 ## 📊 Monitoring
 
 ### Web Stats Interface
-When running a daemon, access web stats at `http://localhost:6767`
+When running a daemon, access web stats at `http://localhost:6767/`
 
 ### Mining Performance
 - Monitor hashrate in mining output
@@ -304,7 +298,7 @@ If you'd like, we can add a Dockerfile and CI workflow to produce reproducible r
 ### Debug Mode
 ```bash
 # Enable debug logging
-OWONERO_LOG_LEVEL=debug ./owonero -d
+OWONERO_LOG_LEVEL=debug ./target/release/owonero-rs  -d
 
 # Build with debug symbols
 go build -tags debug -o owonero-debug ./src
