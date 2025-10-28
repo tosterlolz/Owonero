@@ -7,7 +7,6 @@ mod update;
 mod miner_ui;
 
 use clap::Parser;
-use std::path::Path;
 use std::sync::Arc;
 use colored::Colorize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -23,7 +22,7 @@ const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀�
 ⣧⠈⡄⠈⣿⡜⢱⣶⣦⠀⠀⢠⠆⠀⣁⣀⠘⢸⠀⢸⠀⡄⠀⠀⡆⠀⠠⡀⠃  | |  | |\ \/  \/ / |  __| 
 ⢻⣷⡡⢣⣿⠃⠘⠿⠏⠀⠀⠀⠂⠀⣿⣿⣿⡇⠀⡀⣰⡗⠄⡀⠰⠀⠀⠀⠀  | |__| | \  /\  /  | |____
 ⠀⠙⢿⣜⢻⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠋⢁⢡⠀⡷⣿⠁⠈⠋⠢⢇⠀⡀⠀  \_____/   \/  \/   |______|
-⠀⠀⠈⢻⠀⡆⠀⠀⠀⠀⠀⠀⠀⠀⠐⠆⡘⡇⠀⣼⣿⡇⢀⠀⠀⠀⢱⠁⠀ 							   V.%s
+⠀⠀⠈⢻⠀⡆⠀⠀⠀⠀⠀⠀⠀⠀⠐⠆⡘⡇⠀⣼⣿⡇⢀⠀⠀⠀⢱⠁⠀ 			  V.%s ≧◡≦
 ⠐⢦⣀⠸⡀⢸⣦⣄⡀⠒⠄⠀⠀⠀⢀⣀⣴⠀⣸⣿⣿⠁⣼⢦⠀⠀⠘⠀		
 ⠀⠀⢎⠳⣇⠀⢿⣿⣿⣶⣤⡶⣾⠿⠋⣁⡆⡰⢿⣿⣿⡜⢣⠀⢆⡄⠇⠀
 ⠀⠀⠈⡄⠈⢦⡘⡇⠟⢿⠙⡿⢀⠐⠁⢰⡜⠀⠀⠙⢿⡇⠀⡆⠈⡟⠀⠀      
@@ -135,9 +134,9 @@ fn determine_command(cli: &Cli) -> Command {
 
 fn load_and_merge_config(cli: &Cli) -> anyhow::Result<config::Config> {
     // Load config
-    let config_path = "config.json";
-    let mut config = if Path::new(config_path).exists() {
-        config::load_config(config_path)?
+    let config_path: std::path::PathBuf = dirs::config_dir().unwrap_or_else(|| std::env::temp_dir()).join("owonero").join("config.json");
+    let mut config = if config_path.exists() {
+        config::load_config()?
     } else {
         config::Config::default()
     };
@@ -156,7 +155,7 @@ fn load_and_merge_config(cli: &Cli) -> anyhow::Result<config::Config> {
     config.pool = cli.pool;
 
     // Save updated config
-    config::save_config(&config, config_path)?;
+    config::save_config(&config)?;
 
     Ok(config)
 }
@@ -191,11 +190,15 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+pub fn get_blockchain_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("blockchain.json")
+}
+
 async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
     let blockchain = if !cli.no_init {
-        let mut bc = blockchain::Blockchain::load_from_file("blockchain.json")?;
+        let mut bc = blockchain::Blockchain::load_from_file(get_blockchain_path())?;
         bc.target_block_time = config.target_block_time;
-        bc.save_to_file("blockchain.json")?;
+        bc.save_to_file(get_blockchain_path())?;
         bc
     } else {
         blockchain::Blockchain::new()

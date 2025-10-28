@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
 use std::env;
+use std::path::Path;
 use std::time::{Duration, Instant};
 use std::cell::RefCell;
 use chrono::{DateTime, Utc};
@@ -83,6 +84,8 @@ pub struct Transaction {
     pub amount: i64,
     pub signature: String,
 }
+
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain {
@@ -423,14 +426,14 @@ impl Blockchain {
         }
     }
 
-    pub fn save_to_file(&self, path: &str) -> Result<()> {
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let data = serde_json::to_string_pretty(self)?;
         fs::write(path, data)?;
         Ok(())
     }
 
-    pub fn load_from_file(path: &str) -> Result<Self> {
-        if !std::path::Path::new(path).exists() {
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        if !path.as_ref().exists() {
             let bc = Self::new();
             bc.save_to_file(path)?;
             return Ok(bc);
@@ -618,6 +621,3 @@ pub fn verify_transaction_signature(tx: &Transaction, pub_key_hex: &str) -> bool
 
     public_key.verify(message.as_bytes(), &sig_bytes).is_ok()
 }
-// Use x86_64 prefetch intrinsics when available to touch cache lines
-#[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0, _MM_HINT_T1};

@@ -25,6 +25,7 @@ ratatui = "0.26"
 crossterm = "0.27"
 semver = "1.0"
 libc = "0.2"
+dirs = "6.0.0"
 
 [profile.release]
 opt-level = 3

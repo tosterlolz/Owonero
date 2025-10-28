@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{PathBuf};
 use std::io::ErrorKind;
 use anyhow::{Result, Context};
 
@@ -21,11 +21,14 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let base_dir = get_config_dir();
+        let wallet_path = base_dir.join("wallet.json");
+
         Self {
-            node_address: "localhost:6969".to_string(),
+            node_address: "owonero.yabai.buzz:6969".to_string(),
             daemon_port: 6969,
             web_port: 6767,
-            wallet_path: "wallet.json".to_string(),
+            wallet_path: wallet_path.to_string_lossy().to_string(),
             mining_threads: 1,
             peers: Vec::new(),
             auto_update: true,
@@ -37,11 +40,31 @@ impl Default for Config {
     }
 }
 
-pub fn load_config(path: &str) -> Result<Config> {
-    // Accept a path and return the parsed config. If the file doesn't exist,
-    // create a default config, write it to disk, and return it.
-    let path = Path::new(path);
-    match fs::read_to_string(path) {
+/// Determine the configuration directory for the current platform.
+/// Linux/macOS → `$HOME/.config/Owonero`
+/// Windows → `%APPDATA%\Owonero`
+fn get_config_dir() -> PathBuf {
+    if let Some(dir) = dirs::config_dir() {
+        let owonero_dir: PathBuf = dir.join("Owonero");
+        if !owonero_dir.exists() {
+            let _ = fs::create_dir_all(&owonero_dir);
+        }
+        owonero_dir
+    } else {
+        // Fallback: current directory if home/config can't be determined
+        PathBuf::from(".")
+    }
+}
+
+/// Returns the full path to the config file (`config.json`)
+pub fn get_config_path() -> PathBuf {
+    get_config_dir().join("config.json")
+}
+
+pub fn load_config() -> Result<Config> {
+    let path = get_config_path();
+
+    match fs::read_to_string(&path) {
         Ok(data) => {
             let config: Config = serde_json::from_str(&data)
                 .context("parsing config JSON")?;
@@ -49,9 +72,7 @@ pub fn load_config(path: &str) -> Result<Config> {
         }
         Err(e) if e.kind() == ErrorKind::NotFound => {
             let default = Config::default();
-            // Try to persist the default so subsequent runs have a config file.
-            if let Err(save_err) = save_config(&default, path) {
-                // don't fail the whole load if saving fails; return the default with context
+            if let Err(save_err) = save_config(&default) {
                 anyhow::bail!("failed to write default config: {}", save_err);
             }
             Ok(default)
@@ -60,12 +81,10 @@ pub fn load_config(path: &str) -> Result<Config> {
     }
 }
 
-pub fn save_config<P: AsRef<Path>>(config: &Config, path: P) -> Result<()> {
-    let path = path.as_ref();
+pub fn save_config(config: &Config) -> Result<()> {
+    let path = get_config_path();
     let data = serde_json::to_string_pretty(config).context("serializing config")?;
-    // Write directly for simplicity; could be made atomic by writing to a temp
-    // file and renaming.
-    fs::write(path, data).context("writing config file")?;
+    fs::write(&path, data).context("writing config file")?;
     Ok(())
 }
 
@@ -76,19 +95,19 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip() {
-        let mut path = std::env::temp_dir();
-        path.push(format!("owonero_config_test_{}.json", std::process::id()));
-        let _ = fs::remove_file(&path);
+        let temp_dir = std::env::temp_dir().join("owonero_test_config");
+        let _ = fs::create_dir_all(&temp_dir);
+        let temp_file = temp_dir.join("config.json");
 
         let mut cfg = Config::default();
         cfg.node_address = "127.0.0.1:1234".to_string();
         cfg.daemon_port = 1234;
 
-    save_config(&cfg, &path).expect("save failed");
-    let loaded = load_config(path.to_str().unwrap()).expect("load failed");
+        // save to temporary directory
+        fs::write(&temp_file, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+        let loaded: Config = serde_json::from_str(&fs::read_to_string(&temp_file).unwrap()).unwrap();
         assert_eq!(loaded.node_address, cfg.node_address);
         assert_eq!(loaded.daemon_port, cfg.daemon_port);
-
-        let _ = fs::remove_file(&path);
     }
 }
