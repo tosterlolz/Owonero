@@ -87,7 +87,7 @@ pub fn load_config() -> Result<Config> {
     let path = get_config_path();
     let data = fs::read_to_string(&path).context("reading config file")?;
     let config: Config = serde_json::from_str(&data).context("parsing config JSON")?;
-    config.validate()?;  // Dodane
+    config.validate()?; // Validate after loading
     let _ = Ok::<Config, anyhow::Error>(config);
     match fs::read_to_string(&path) {
         Ok(data) => {
