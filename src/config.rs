@@ -19,6 +19,28 @@ pub struct Config {
     pub pool: bool,
 }
 
+impl Config {
+    pub fn validate(&self) -> Result<()> {
+        if self.daemon_port == self.web_port {
+            anyhow::bail!("daemon_port and web_port must be different");
+        }
+        if self.mining_threads == 0 {
+            anyhow::bail!("mining_threads must be at least 1");
+        }
+        if self.mining_intensity > 100 {
+            anyhow::bail!("mining_intensity must be <= 100");
+        }
+        // Sprawdź ścieżkę portfela
+        let wallet_path = std::path::Path::new(&self.wallet_path);
+        if let Some(parent) = wallet_path.parent() {
+            if !parent.exists() {
+                anyhow::bail!("Wallet path directory does not exist: {}", parent.display());
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let base_dir = get_config_dir();
@@ -63,21 +85,22 @@ pub fn get_config_path() -> PathBuf {
 
 pub fn load_config() -> Result<Config> {
     let path = get_config_path();
-
+    let data = fs::read_to_string(&path).context("reading config file")?;
+    let config: Config = serde_json::from_str(&data).context("parsing config JSON")?;
+    config.validate()?;  // Dodane
+    let _ = Ok::<Config, anyhow::Error>(config);
     match fs::read_to_string(&path) {
         Ok(data) => {
-            let config: Config = serde_json::from_str(&data)
-                .context("parsing config JSON")?;
+            let config: Config = serde_json::from_str(&data).context("parsing config JSON")?;
+            config.validate()?;
             Ok(config)
         }
         Err(e) if e.kind() == ErrorKind::NotFound => {
             let default = Config::default();
-            if let Err(save_err) = save_config(&default) {
-                anyhow::bail!("failed to write default config: {}", save_err);
-            }
+            save_config(&default)?;
             Ok(default)
         }
-        Err(e) => Err(e).context("reading config file"),
+        Err(e) => Err(e.into()),
     }
 }
 
