@@ -25,7 +25,6 @@ pub struct MinerStats {
 }
 
 pub async fn start_mining(
-    wallet_path: &str,
     node_addr: &str,
     blocks_to_mine: u64,
     threads: usize,
@@ -35,7 +34,7 @@ pub async fn start_mining(
     log_tx: Option<mpsc::Sender<String>>,
     shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> anyhow::Result<()> {
-    let wallet = crate::wallet::load_or_create_wallet(wallet_path)?;
+    let wallet = crate::config::load_wallet()?;
 
     // Prefer sending logs into the TUI when available. Fall back to stdout if not.
     if let Some(ref tx) = log_tx {

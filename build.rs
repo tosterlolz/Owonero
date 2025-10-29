@@ -45,7 +45,6 @@ fn read_git_head_ref() -> Option<String> {
 }
 
 fn main() {
-    // First, try to get short commit hash from git. If unavailable, try reading .git/HEAD.
     let git_hash = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"]) 
         .output()

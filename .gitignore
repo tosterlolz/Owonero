@@ -3,4 +3,4 @@ wallet.json
 *.exe
 experimental/
 target/
-cargo.lock
+*.lock

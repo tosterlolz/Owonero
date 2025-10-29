@@ -4,12 +4,14 @@ mod miner;
 mod daemon;
 mod config;
 mod update;
+mod completions;
 mod miner_ui;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use colored::Colorize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use anyhow::Context;
 
 const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⡐⢀⣾⣷⠪⠑⠛⠛⠛⠂⠠⠶⢶⣿⣦⡀⠀⠈⢐⢠⣑⠤⣀⠀⠀⠀
@@ -33,6 +35,8 @@ const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀�
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Owonero cryptocurrency miner/daemon")]
 struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
     /// Run as daemon
     #[arg(short, long)]
     daemon: bool,
@@ -80,7 +84,8 @@ struct Cli {
     /// Number of mining threads
     #[arg(short = 't', long, default_value = "1")]
     threads: usize,
-
+    #[arg(long = "install-completions", value_name = "SHELL")]
+    pub install_completions: Option<String>,
     /// Comma-separated list of peer addresses
     #[arg(long)]
     peers: Option<String>,
@@ -106,13 +111,15 @@ struct Cli {
         amount: Option<f64>,
 }
 
+#[derive(Subcommand, Clone)]
 enum Command {
     Daemon,
     Tui,
     Mine,
     MinerUi,
     WalletInfo,
-        Send,
+    Send,
+    Completions { shell: String, output: Option<String> },
 }
 
 fn determine_command(cli: &Cli) -> Command {
@@ -163,7 +170,24 @@ fn load_and_merge_config(cli: &Cli) -> anyhow::Result<config::Config> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-
+    if let Some(shell) = &cli.install_completions {
+        let path = completions::install_user_completion(shell)
+            .context("failed to install shell completions")?;
+        println!("Installed completions for {} in {}", shell, path.display());
+        return Ok(());
+    }
+    match &cli.command {
+        Some(Command::Completions { shell, output }) => {
+            if let Some(_out_path) = output {
+                let path = completions::install_user_completion(shell)?;
+                println!("Installed completions for {} in {}", shell, path.display());
+            } else {
+                completions::print_to_stdout(shell)?;
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
     // Compose version string including short git commit (set by build.rs) and print ASCII logo
     let full_version = format!("v{}=>{}", env!("CARGO_PKG_VERSION"), option_env!("GIT_HASH_SHORT").unwrap_or("unknown"));
     println!("{}", ASCII_LOGO.replace("%s", &full_version).purple());
@@ -186,7 +210,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Mine => run_mining_mode(cli.clone(), config.clone()).await,
         Command::MinerUi => run_miner_ui_mode().await,
         Command::WalletInfo => run_wallet_info_mode(config.clone()).await,
-    Command::Send => run_send_mode(cli.clone(), config.clone()).await,
+        Command::Send => run_send_mode(cli.clone(), config.clone()).await,
+        // completions handled earlier; include arm to make match exhaustive
+        Command::Completions { .. } => Ok(()),
     }
 }
 
@@ -232,7 +258,6 @@ async fn run_mining_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
     // Start mining in background
     let mining_handle = tokio::spawn(async move {
         if let Err(e) = miner::start_mining(
-            &config.wallet_path,
             &config.node_address,
             cli.blocks,
             config.mining_threads,
@@ -284,7 +309,7 @@ async fn run_miner_ui_mode() -> anyhow::Result<()> {
     miner_ui::run_miner_ui().await
 }
 async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
-    let wallet = wallet::load_or_create_wallet(&config.wallet_path)?;
+    let wallet = config::load_wallet()?;
 
     // Try to sync the local chain from the configured node if enabled.
     let mut blockchain = blockchain::Blockchain::load_from_file("blockchain.json")?;
@@ -349,7 +374,7 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
     }
 
     // Load wallet and create signed transaction
-    let wallet = wallet::load_or_create_wallet(&config.wallet_path)?;
+    let wallet = config::load_wallet()?;
     let tx = wallet.create_signed_transaction(&to, amount_units)?;
 
     // Connect to node and submit transaction

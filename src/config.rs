@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{PathBuf};
-use std::io::ErrorKind;
 use anyhow::{Result, Context};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,26 +82,30 @@ pub fn get_config_path() -> PathBuf {
     get_config_dir().join("config.json")
 }
 
+pub fn get_wallet_path() -> PathBuf {
+    get_config_dir().join("wallet.json")
+}
+
+pub fn load_wallet() -> Result<crate::wallet::Wallet> {
+    let path = get_wallet_path();
+    // The wallet module exposes load_or_create_wallet(&str)
+    crate::wallet::load_or_create_wallet(&path.to_string_lossy())
+}
+
 pub fn load_config() -> Result<Config> {
     let path = get_config_path();
-    let data = fs::read_to_string(&path).context("reading config file")?;
-    let config: Config = serde_json::from_str(&data).context("parsing config JSON")?;
-    config.validate()?; // Validate after loading
-    let _ = Ok::<Config, anyhow::Error>(config);
-    match fs::read_to_string(&path) {
-        Ok(data) => {
-            let config: Config = serde_json::from_str(&data).context("parsing config JSON")?;
-            config.validate()?;
-            Ok(config)
-        }
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            let default = Config::default();
-            save_config(&default)?;
-            Ok(default)
-        }
-        Err(e) => Err(e.into()),
+
+    if path.exists() {
+        let data = fs::read_to_string(&path).context("reading config file")?;
+        let config: Config = serde_json::from_str(&data).context("parsing config JSON")?;
+        config.validate()?;
+        Ok(config)
+    } else {
+        let default = Config::default();
+        Ok(default)
     }
 }
+
 
 pub fn save_config(config: &Config) -> Result<()> {
     let path = get_config_path();

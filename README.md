@@ -90,24 +90,31 @@ The algorithm scales well with:
 - **RAM**: 4GB+ system memory (mining uses ~2MB per thread)
 - **Cache**: CPUs with large L3 cache perform better
 
+### Install completions
+```bash
+owonero --install-completions <shell>
+# for bash:
+owonero --install-completions bash
+```
+
 ### Mining Commands
 
 ```bash
 # Solo mining with 8 threads
-./target/release/owonero-rs --mine --node localhost:6969 --threads 8
+owonero --mine --node localhost:6969 --threads 8
 
 # Pool mining (if supported)
-./target/release/owonero-rs  --mine --pool --node pool.example.com:6969 --threads 8
+owonero  --mine --pool --node pool.example.com:6969 --threads 8
 
 # Mining with TUI interface
-./target/release/owonero-rs  --mine --miner-ui --node localhost:6969 --threads 4
+owonero  --mine --miner-ui --node localhost:6969 --threads 4
 ```
 
 ### 4. Check Your Wallet
 
 ```bash
 # View balance and address
-./target/release/owonero-rs 
+owonero 
 ```
 
 ## 📖 Usage Guide
@@ -116,7 +123,7 @@ The algorithm scales well with:
 
 #### Daemon Mode
 ```bash
-./target/release/owonero-rs  -d [options]
+owonero  -d [options]
 ```
 - `-d`: Run as network daemon
 - `-p PORT`: Listening port (default: 6969)
@@ -127,7 +134,7 @@ The algorithm scales well with:
 
 #### Mining Mode
 ```bash
-./target/release/owonero-rs  -m [options]
+owonero  -m [options]
 ```
 - `-m`: Start mining
 - `-n HOST:PORT`: Node to submit blocks to
@@ -137,7 +144,7 @@ The algorithm scales well with:
 
 #### Wallet Mode
 ```bash
-./target/release/owonero-rs  [options]
+owonero  [options]
 ```
 - `-w FILE`: Custom wallet file
 - `-tui`: Launch terminal user interface
@@ -298,7 +305,7 @@ If you'd like, we can add a Dockerfile and CI workflow to produce reproducible r
 ### Debug Mode
 ```bash
 # Enable debug logging
-OWONERO_LOG_LEVEL=debug ./target/release/owonero-rs  -d
+OWONERO_LOG_LEVEL=debug owonero  -d
 
 # Build with debug symbols
 go build -tags debug -o owonero-debug ./src
