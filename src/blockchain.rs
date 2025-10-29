@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use std::cell::RefCell;
 use chrono::{DateTime, Utc};
 use std::fs;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use hex;
 
@@ -246,6 +246,28 @@ impl Blockchain {
         return result_hash;
     }
 
+    pub fn verify_chain(&self) -> Result<()> {
+        for i in 1..self.chain.len() {
+            let prev = &self.chain[i - 1];
+            let cur = &self.chain[i];
+
+            if cur.prev_hash != prev.hash {
+                anyhow::bail!(
+                    "chain broken at index {}: prev_hash {} != prev.hash {}",
+                    cur.index,
+                    cur.prev_hash,
+                    prev.hash
+                );
+            }
+
+            let calc = Self::calculate_hash(cur);
+            if calc != cur.hash {
+                anyhow::bail!("invalid hash at index {}: {} != {}", cur.index, calc, cur.hash);
+            }
+        }
+        Ok(())
+    }
+
     pub fn get_dynamic_difficulty(&self) -> u32 {
         let min_difficulty = 1;
         let max_difficulty = 7;
@@ -433,16 +455,18 @@ impl Blockchain {
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        if !path.as_ref().exists() {
+        let path_ref = path.as_ref();
+
+        if !path_ref.exists() {
             let bc = Self::new();
-            bc.save_to_file(path)?;
+            bc.save_to_file(path_ref)?;
             return Ok(bc);
         }
 
-        let data = fs::read_to_string(path)?;
+        let data = fs::read_to_string(path_ref)?;
         let mut bc: Blockchain = serde_json::from_str(&data)?;
 
-        // Recalculate hashes
+        // Recalculate hashes for safety
         for block in &mut bc.chain {
             block.hash = Self::calculate_hash(block);
         }
@@ -450,6 +474,9 @@ impl Blockchain {
         if bc.chain.is_empty() {
             bc.chain = vec![Self::create_genesis_block()];
         }
+
+        // Verify integrity before returning
+        bc.verify_chain().context("loaded blockchain failed integrity check")?;
 
         Ok(bc)
     }

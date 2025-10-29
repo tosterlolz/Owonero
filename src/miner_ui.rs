@@ -95,7 +95,7 @@ impl MinerUI {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(15), // Header/Logo
+                    Constraint::Length(15), // Header/Ascii
                     Constraint::Length(8),  // Hashrate chart
                     Constraint::Length(6),  // Stats
                     Constraint::Min(10),    // Logs
@@ -103,10 +103,10 @@ impl MinerUI {
                 ])
                 .split(size);
 
-            // Header with logo (inject build version/commit)
+            // Header with ascii (inject build version/commit)
             let full_version = format!("v{}=>{}", env!("CARGO_PKG_VERSION"), option_env!("GIT_HASH_SHORT").unwrap_or("unknown"));
-            let logo = ASCII_LOGO.replace("%s", &full_version);
-            let header = Paragraph::new(logo)
+            let ascii = ASCII_LOGO.replace("%s", &full_version);
+            let header = Paragraph::new(ascii)
                 .block(Block::default().borders(Borders::ALL).title("OWONERO MINER"))
                 .style(Style::default().fg(Color::Cyan));
             f.render_widget(header, chunks[0]);
