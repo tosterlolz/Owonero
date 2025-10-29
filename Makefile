@@ -23,7 +23,7 @@ endif
 
 
 install: build
-	install -Dm755 ./target/release/owonero /usr/local/bin/owonero
+	sudo install -Dm755 ./target/release/owonero /usr/local/bin/owonero
 	@echo "✅ Installation complete. You can run the application using 'owonero'."
 
 # Czyszczenie
