@@ -19,10 +19,10 @@ impl Wallet {
 
     pub fn new() -> Result<Self> {
         let rng = SystemRandom::new();
-        let pkcs8_bytes = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+        let pkcs8_doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
             .map_err(|_| anyhow!("Failed to generate key pair"))?;
 
-        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8_bytes.as_ref(), &SystemRandom::new())
+        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8_doc.as_ref(), &rng)
             .map_err(|_| anyhow!("Failed to load key pair"))?;
 
         let pub_key_bytes = key_pair.public_key().as_ref();
@@ -30,7 +30,8 @@ impl Wallet {
         Ok(Self {
             address: Self::generate_address(),
             pub_key: hex::encode(pub_key_bytes),
-            priv_key: hex::encode(pkcs8_bytes),
+            // zapis PKCS#8 jako hex (można też base64)
+            priv_key: hex::encode(pkcs8_doc.as_ref()),
         })
     }
 
@@ -51,8 +52,6 @@ impl Wallet {
 
     pub fn create_signed_transaction(&self, to: &str, amount: i64) -> Result<crate::blockchain::Transaction> {
         let mut tx = crate::blockchain::Transaction {
-            // Use address in `from` for human-readable bookkeeping and balance checks,
-            // and include the public key separately so signature verification can use it.
             from: self.address.clone(),
             pub_key: self.pub_key.clone(),
             to: to.to_string(),

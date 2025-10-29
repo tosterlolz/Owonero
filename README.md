@@ -52,17 +52,17 @@ git clone https://github.com/tosterlolz/Owonero.git
 cd Owonero
 
 # Build for your platform
-cargo build --release                    # Release build
+sudo make install               # Release build
 ```
 
 ### 2. Start Your First Node
 
 ```bash
 # Start daemon (network node)
-./target/release/owonero-rs -d
+owonero -d
 
 # Or connect to existing network
-./target/release/owonero-rs  -d -n owonero.yabai.buzz:6969
+owonero  -d -n owonero.yabai.buzz:6969
 ```
 
 ## 🔨 RX/OWO Mining Algorithm
