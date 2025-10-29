@@ -89,7 +89,7 @@ impl MinerUI {
         let hashrate_history = &self.hashrate_history;
 
         self.terminal.draw(|f| {
-            let size = f.size();
+            let size = f.area();
 
             // Create main layout
             let chunks = Layout::default()
