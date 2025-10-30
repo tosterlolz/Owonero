@@ -6,6 +6,8 @@ mod config;
 mod update;
 mod completions;
 mod miner_ui;
+mod wallet_ui;
+mod http_api;
 
 use clap::{Parser, ValueHint};
 use std::sync::Arc;
@@ -230,7 +232,7 @@ async fn main() -> anyhow::Result<()> {
     } else if cli.mine {
         run_mining_mode(cli, config).await
     } else if cli.tui {
-        run_tui_mode().await
+        run_tui_mode(config).await
     } else if cli.miner_ui {
         run_miner_ui().await  // Note: This calls `run_miner_ui` from miner_ui module, not the unused `run_miner_ui_mode`
     } else if cli.send {
@@ -261,12 +263,45 @@ async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
         pm.add_peer(peer.clone());
     }
 
-    daemon::run_daemon(config.daemon_port, blockchain, pm, config.pool).await
+    let daemon_port = config.daemon_port;
+    let web_port = config.web_port;
+    let daemon_addr = format!("127.0.0.1:{}", daemon_port);
+
+    // Spawn TCP daemon
+    let daemon_handle = tokio::spawn(async move {
+        if let Err(e) = daemon::run_daemon(daemon_port, blockchain, pm, config.pool).await {
+            eprintln!("Daemon error: {}", e);
+        }
+    });
+
+    // Spawn HTTP API server
+    let http_handle = tokio::spawn(async move {
+        if let Err(e) = http_api::run_http_server(web_port, daemon_addr).await {
+            eprintln!("HTTP API error: {}", e);
+        }
+    });
+
+    // Wait for both to finish
+    tokio::select! {
+        _ = daemon_handle => {},
+        _ = http_handle => {},
+        _ = tokio::signal::ctrl_c() => {
+            println!("Shutting down daemon and HTTP server...");
+        }
+    }
+
+    Ok(())
 }
 
-async fn run_tui_mode() -> anyhow::Result<()> {
-    // TODO: Implement wallet TUI
-    println!("{}", "Wallet TUI not yet implemented".yellow());
+async fn run_tui_mode(config: config::Config) -> anyhow::Result<()> {
+    // Load wallet using config wallet_path
+    let wallet = crate::wallet::load_or_create_wallet(&config.wallet_path)?;
+    let blockchain = blockchain::Blockchain::load_from_file(crate::config::get_blockchain_path())?;
+
+    // Create UI and run
+    let mut ui = wallet_ui::WalletUI::new()?;
+    ui.run(wallet, blockchain).await?;
+
     Ok(())
 }
 
@@ -329,7 +364,7 @@ async fn run_mining_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
 }
 
 async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
-    let wallet = config::load_wallet()?;
+    let wallet = crate::wallet::load_or_create_wallet(&config.wallet_path)?;
     // Try to sync the local chain from a configured node. Prefer the node
     // address stored in the wallet (if present), otherwise fall back to
     // the CLI/config node address. This allows wallets to remember which
@@ -377,20 +412,6 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     // can see why the balance is what it is. This helps when blocks appear
     // to be mined but the wallet still shows zero balance.
     // println!("Diagnostics: scanning chain for transactions involving this wallet...");
-    let mut matches = 0usize;
-    for block in &blockchain.chain {
-        for tx in &block.transactions {
-            if tx.to.trim().eq_ignore_ascii_case(&wallet.address.trim()) || tx.from.trim().eq_ignore_ascii_case(&wallet.address.trim()) {
-                matches += 1;
-                println!("Block {}: tx from='{}' to='{}' amount={} sig={}", block.index, tx.from, tx.to, tx.amount, tx.signature);
-            }
-        }
-    }
-    if matches == 0 {
-        println!("No matching transactions found in chain for this wallet.");
-    } else {
-        println!("Found {} matching transaction(s)", matches);
-    }
 
     Ok(())
 }

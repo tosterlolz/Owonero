@@ -333,6 +333,10 @@ pub async fn start_mining(
     };
 
     // Stats reporter
+    // Capture wallet address and node addr for reporting to the daemon
+    let wallet_addr_for_stats = wallet.address.clone();
+    let node_addr_for_stats = node_addr.to_string();
+
     let stats_handle = if let Some(tx) = stats_tx {
         let attempts = attempts.clone();
         let mined = mined.clone();
@@ -341,6 +345,8 @@ pub async fn start_mining(
         let rejected = rejected.clone();
         let start_time = start_time.clone();
         let log_tx = log_tx.clone();
+        let wallet_addr_for_stats = wallet_addr_for_stats.clone();
+        let node_addr_for_stats = node_addr_for_stats.clone();
         Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             let mut zero_streak: u32 = 0;
@@ -395,6 +401,27 @@ pub async fn start_mining(
                 };
                 // Send stats to UI
                 let _ = tx.send(stats).await;
+
+                // Also report summary stats to the daemon so the web UI / node
+                // can aggregate per-wallet and network hashrates.
+                // We only send a compact payload (wallet + total_hps + sols).
+                let report = serde_json::json!({
+                    "wallet": wallet_addr_for_stats,
+                    "hashrate": h,
+                    "sols": sols,
+                    "timestamp": chrono::Utc::now().timestamp()
+                });
+                let report_str = report.to_string();
+                // Best-effort: try to connect and send the report; ignore errors
+                if let Ok(mut stream) = TcpStream::connect(&node_addr_for_stats).await {
+                    let (reader, mut writer) = stream.split();
+                    // skip greeting
+                    let mut _tmp = String::new();
+                    let mut reader = BufReader::new(reader);
+                    let _ = reader.read_line(&mut _tmp).await;
+                    let _ = writer.write_all(b"updatestats\n").await;
+                    let _ = writer.write_all(format!("{}\n", report_str).as_bytes()).await;
+                }
 
                 // Emit occasional debug log when attempts are zero to help diagnose
                 // why hashrate may show 0 H/s. Send logs at most once every 5 seconds

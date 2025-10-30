@@ -71,22 +71,29 @@ impl Wallet {
 }
 
 pub fn load_or_create_wallet(path: &str) -> Result<Wallet> {
-    if std::path::Path::new(path).exists() {
+    let p = std::path::Path::new(path);
+    if p.exists() {
         let data = fs::read_to_string(path)?;
         let wallet: Wallet = serde_json::from_str(&data)?;
         Ok(wallet)
     } else {
-        let wallet = Wallet::new()?;
+        // Ensure parent directories exist for the target path. On Windows
+        // users may pass paths like "C:\some\dir\wallet.json" or
+        // relative paths; creating parents avoids write errors.
+        if let Some(parent) = p.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = fs::create_dir_all(parent);
+            }
+        }
+
+        let mut wallet = Wallet::new()?;
         // Attempt to pick up the configured node address automatically so
         // the wallet file contains a default node to talk to. This is
         // best-effort and will silently continue if config can't be read.
         if let Ok(cfg) = crate::config::load_config() {
-            let mut wallet = wallet;
             wallet.node_address = Some(cfg.node_address);
-            let data = serde_json::to_string_pretty(&wallet)?;
-            fs::write(path, data)?;
-            return Ok(wallet);
         }
+
         let data = serde_json::to_string_pretty(&wallet)?;
         fs::write(path, data)?;
         Ok(wallet)

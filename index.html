@@ -94,6 +94,39 @@
   </div>
 </section>
 
+<!-- Wallet / Stats Section -->
+<section id="stats" class="bg-white">
+  <div class="container">
+    <h2 class="text-center mb-4">Wallet Stats</h2>
+    <p class="text-center">Enter a wallet public key (hex) to view its current reported hashrate and on-chain balance. The page will poll the node periodically. Note: the daemon must expose an HTTP API (e.g. <code>/api/wallethashrate?addr=</code> and <code>/api/walletbalance?addr=</code>) for live data; otherwise this UI will show a connection error.</p>
+
+    <div class="row justify-content-center mb-4">
+      <div class="col-md-8">
+        <div class="input-group">
+          <input id="walletInput" type="text" class="form-control" placeholder="Paste wallet pubkey hex here" aria-label="Wallet pubkey">
+          <button id="walletBtn" class="btn btn-primary">Show Stats</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row justify-content-center">
+      <div class="col-md-6">
+        <div class="card p-3 mb-3">
+          <h5>Reported Hashrate</h5>
+          <p id="hashrateDisplay" class="lead">—</p>
+          <small id="hashrateUpdated" class="text-muted">last update: —</small>
+        </div>
+        <div class="card p-3 mb-3">
+          <h5>On-chain Balance</h5>
+          <p id="balanceDisplay" class="lead">—</p>
+          <small id="balanceUpdated" class="text-muted">last sync: —</small>
+        </div>
+        <div id="statsError" class="alert alert-warning d-none" role="alert"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- Contact Section -->
 <section id="contact" class="bg-light">
   <div class="container">
@@ -128,5 +161,105 @@
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Wallet stats polling logic. This page expects the node/daemon to expose
+// simple HTTP endpoints (not implemented in the daemon yet):
+// GET /api/wallethashrate?addr=<hex> -> { wallet, hashrate, last_update }
+// GET /api/walletbalance?addr=<hex> -> { wallet, balance, last_sync }
+// The script will poll those endpoints every 2s when a wallet is active.
+(() => {
+  const walletInput = document.getElementById('walletInput');
+  const walletBtn = document.getElementById('walletBtn');
+  const hrDisp = document.getElementById('hashrateDisplay');
+  const hrUpdated = document.getElementById('hashrateUpdated');
+  const balDisp = document.getElementById('balanceDisplay');
+  const balUpdated = document.getElementById('balanceUpdated');
+  const statsError = document.getElementById('statsError');
+
+  let currentAddr = null;
+  let pollHandle = null;
+
+  function showError(msg) {
+    statsError.textContent = msg;
+    statsError.classList.remove('d-none');
+  }
+  function clearError() {
+    statsError.classList.add('d-none');
+    statsError.textContent = '';
+  }
+
+  async function fetchHashrate(addr) {
+    try {
+      const res = await fetch(`https://owonero.yabai.buzz:6767/api/wallethashrate?addr=${encodeURIComponent(addr)}`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const j = await res.json();
+      return j;
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  async function fetchBalance(addr) {
+    try {
+      const res = await fetch(`https://owonero.yabai.buzz:6767/api/walletbalance?addr=${encodeURIComponent(addr)}`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const j = await res.json();
+      return j;
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  async function pollOnce() {
+    if (!currentAddr) return;
+    clearError();
+    try {
+      const hr = await fetchHashrate(currentAddr);
+      hrDisp.textContent = (hr.hashrate || 0) + ' H/s';
+      const d = hr.last_update ? new Date(hr.last_update * 1000) : null;
+      hrUpdated.textContent = d ? `last update: ${d.toLocaleTimeString()}` : 'last update: -';
+    } catch (e) {
+      hrDisp.textContent = '—';
+      hrUpdated.textContent = 'last update: —';
+      showError('Failed to fetch hashrate: ' + e.message + '. Make sure the daemon exposes /api/wallethashrate.');
+    }
+
+    try {
+      const b = await fetchBalance(currentAddr);
+      balDisp.textContent = (b.balance != null) ? b.balance : '—';
+      const d2 = b.last_sync ? new Date(b.last_sync * 1000) : null;
+      balUpdated.textContent = d2 ? `last sync: ${d2.toLocaleTimeString()}` : 'last sync: -';
+    } catch (e) {
+      balDisp.textContent = '—';
+      balUpdated.textContent = 'last sync: —';
+      showError('Failed to fetch balance: ' + e.message + '. Make sure the daemon exposes /api/walletbalance.');
+    }
+  }
+
+  function startPolling(addr) {
+    stopPolling();
+    currentAddr = addr;
+    pollOnce();
+    pollHandle = setInterval(pollOnce, 2000);
+  }
+
+  function stopPolling() {
+    if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+    currentAddr = null;
+  }
+
+  walletBtn.addEventListener('click', () => {
+    const v = walletInput.value.trim();
+    if (!v) { showError('Please paste a wallet public key (hex).'); return; }
+    clearError();
+    startPolling(v);
+  });
+
+  // Allow Enter key
+  walletInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { walletBtn.click(); }
+  });
+})();
+</script>
 </body>
 </html>

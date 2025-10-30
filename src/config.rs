@@ -92,8 +92,12 @@ pub fn get_blockchain_path() -> PathBuf {
 }
 
 pub fn load_wallet() -> Result<crate::wallet::Wallet> {
-    let path = get_wallet_path();
-    // The wallet module exposes load_or_create_wallet(&str)
+    // Load config to respect any CLI or saved overrides to wallet_path.
+    // If loading config fails, fall back to the default wallet path.
+    let cfg = load_config().unwrap_or_default();
+    let path = std::path::PathBuf::from(cfg.wallet_path);
+    // Use the provided path as-is (absolute or relative to cwd). The
+    // wallet helper will create parent directories as needed.
     crate::wallet::load_or_create_wallet(&path.to_string_lossy())
 }
 
