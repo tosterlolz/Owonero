@@ -348,6 +348,25 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     println!("{} {}", "Balance:".yellow(), balance);
     println!("{} {}", "Chain height:".cyan(), blockchain.chain.len() - 1);
 
+    // Diagnostic: list any transactions that involve this wallet so the user
+    // can see why the balance is what it is. This helps when blocks appear
+    // to be mined but the wallet still shows zero balance.
+    println!("Diagnostics: scanning chain for transactions involving this wallet...");
+    let mut matches = 0usize;
+    for block in &blockchain.chain {
+        for tx in &block.transactions {
+            if tx.to.trim().eq_ignore_ascii_case(&wallet.address.trim()) || tx.from.trim().eq_ignore_ascii_case(&wallet.address.trim()) {
+                matches += 1;
+                println!("Block {}: tx from='{}' to='{}' amount={} sig={}", block.index, tx.from, tx.to, tx.amount, tx.signature);
+            }
+        }
+    }
+    if matches == 0 {
+        println!("No matching transactions found in chain for this wallet.");
+    } else {
+        println!("Found {} matching transaction(s)", matches);
+    }
+
     Ok(())
 }
 
