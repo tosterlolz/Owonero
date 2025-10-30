@@ -91,6 +91,9 @@ async fn handle_connection(
                 // Read next line for block JSON
                 line.clear();
                 reader.read_line(&mut line).await?;
+                // Diagnostic: log the raw block JSON received so we can verify
+                // whether the miner sent transactions/coinbase.
+                eprintln!("[daemon] received submitblock JSON: {}", line.trim());
                 let block: crate::blockchain::Block = serde_json::from_str(line.trim())?;
 
                 // Do a verbose validation to provide the miner a clearer rejection reason

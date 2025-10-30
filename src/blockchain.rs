@@ -162,7 +162,7 @@ impl Blockchain {
             }
         }
 
-        self.save_to_file(crate::get_blockchain_path())?;
+    self.save_to_file(crate::config::get_blockchain_path())?;
         eprintln!("Sync complete. New height: {}", self.chain.last().map(|b| b.index).unwrap_or(0));
 
         Ok(())

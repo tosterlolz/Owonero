@@ -14,10 +14,6 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    pub fn generate_address() -> String {
-        format!("OWO{:016x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())
-    }
-
     pub fn new() -> Result<Self> {
         let rng = SystemRandom::new();
         let pkcs8_doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)

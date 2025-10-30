@@ -165,6 +165,14 @@ pub async fn start_mining(
                 // Submit block
                 writer.write_all(b"submitblock\n").await?;
                 let block_json = serde_json::to_string(&block)?;
+                // Diagnostic: log the exact block JSON we're about to submit so
+                // we can verify coinbase/tx contents in case the node later
+                // shows empty transactions.
+                if let Some(ref tx) = log_tx_clone1 {
+                    let _ = tx.send(format!("[miner] submitting block JSON: {}", block_json)).await;
+                } else {
+                    eprintln!("[miner] submitting block JSON: {}", block_json);
+                }
                 writer.write_all(format!("{}\n", block_json).as_bytes()).await?;
 
                 let mut response = String::new();

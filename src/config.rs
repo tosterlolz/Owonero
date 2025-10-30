@@ -86,6 +86,11 @@ pub fn get_wallet_path() -> PathBuf {
     get_config_dir().join("wallet.json")
 }
 
+/// Returns the full path to the blockchain file stored in the config directory.
+pub fn get_blockchain_path() -> PathBuf {
+    get_config_dir().join("blockchain.json")
+}
+
 pub fn load_wallet() -> Result<crate::wallet::Wallet> {
     let path = get_wallet_path();
     // The wallet module exposes load_or_create_wallet(&str)

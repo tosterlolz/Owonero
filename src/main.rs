@@ -214,13 +214,11 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-pub fn get_blockchain_path() -> std::path::PathBuf {
-    std::path::PathBuf::from("blockchain.json")
-}
+// Blockchain path lives in the config directory, use `config::get_blockchain_path()`.
 
 async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
     let blockchain = if !cli.no_init {
-        let mut bc = blockchain::Blockchain::load_from_file(crate::get_blockchain_path())?;
+        let mut bc = blockchain::Blockchain::load_from_file(crate::config::get_blockchain_path())?;
         eprintln!("Syncing blockchain...");
         bc.sync(&config.peers).await?;  // Add this line
         bc
@@ -312,7 +310,7 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     let node_to_use = wallet.node_address.clone().unwrap_or(config.node_address.clone());
 
     // Load local chain
-    let mut blockchain = blockchain::Blockchain::load_from_file("blockchain.json")?;
+    let mut blockchain = blockchain::Blockchain::load_from_file(crate::config::get_blockchain_path())?;
 
     if config.sync_on_startup {
         if let Ok(stream) = tokio::net::TcpStream::connect(&node_to_use).await {
@@ -331,7 +329,7 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
                         // If newer, replace local copy and persist
                         if new_chain.chain.len() > blockchain.chain.len() {
                             blockchain = new_chain;
-                            let _ = blockchain.save_to_file("blockchain.json");
+                            let _ = blockchain.save_to_file(crate::config::get_blockchain_path());
                             println!("Synchronized blockchain from node {}", node_to_use);
                         }
                     }
@@ -351,7 +349,7 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     // Diagnostic: list any transactions that involve this wallet so the user
     // can see why the balance is what it is. This helps when blocks appear
     // to be mined but the wallet still shows zero balance.
-    println!("Diagnostics: scanning chain for transactions involving this wallet...");
+    // println!("Diagnostics: scanning chain for transactions involving this wallet...");
     let mut matches = 0usize;
     for block in &blockchain.chain {
         for tx in &block.transactions {
