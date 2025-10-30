@@ -7,11 +7,12 @@ mod update;
 mod completions;
 mod miner_ui;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, ValueHint};
 use std::sync::Arc;
 use colored::Colorize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use anyhow::Context;
+
+use crate::miner_ui::run_miner_ui;
 
 const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⡐⢀⣾⣷⠪⠑⠛⠛⠛⠂⠠⠶⢶⣿⣦⡀⠀⠈⢐⢠⣑⠤⣀⠀⠀⠀
@@ -30,13 +31,11 @@ const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀�
 ⠀⠀⠈⡄⠈⢦⡘⡇⠟⢿⠙⡿⢀⠐⠁⢰⡜⠀⠀⠙⢿⡇⠀⡆⠈⡟⠀⠀      
 "#;
 
-#[derive(Parser, Clone)]
-#[command(name = "owonero-rs")]
+#[derive(Parser)]
+#[command(name = "owonero")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Owonero cryptocurrency miner/daemon")]
 struct Cli {
-    #[command(subcommand)]
-    pub command: Option<Command>,
     /// Run as daemon
     #[arg(short, long)]
     daemon: bool,
@@ -50,15 +49,15 @@ struct Cli {
     miner_ui: bool,
 
     /// Daemon port
-    #[arg(short = 'p', long, default_value = "6969")]
+    #[arg(short = 'p', long, default_value = "6969", value_hint = ValueHint::Other)]  // Hint for port numbers
     port: u16,
 
     /// Web stats server port
-    #[arg(long, default_value = "6767")]
+    #[arg(long, default_value = "6767", value_hint = ValueHint::Other)]  // Hint for port numbers
     web_port: u16,
 
     /// Wallet file path
-    #[arg(short = 'w', long, default_value = "wallet.json")]
+    #[arg(short = 'w', long, default_value = "wallet.json", value_hint = ValueHint::FilePath)]  // File path completion
     wallet_path: String,
 
     /// Mine blocks
@@ -66,7 +65,7 @@ struct Cli {
     mine: bool,
 
     /// How many blocks to mine (0 = forever)
-    #[arg(short = 'b', long, default_value = "0")]
+    #[arg(short = 'b', long, default_value = "0", value_hint = ValueHint::Other)]  // Numeric hint
     blocks: u64,
 
     /// Enable pool mining mode
@@ -74,20 +73,22 @@ struct Cli {
     pool: bool,
 
     /// CPU intensity percent (0-100)
-    #[arg(short = 'i', long, default_value = "100")]
+    #[arg(short = 'i', long, default_value = "100", value_hint = ValueHint::Other)]  // Numeric hint
     intensity: u8,
 
     /// Node address (host:port)
-    #[arg(short = 'n', long, default_value = "localhost:6969")]
+    #[arg(short = 'n', long, default_value = "owonero.yabai.buzz:6969", value_hint = ValueHint::Hostname)]  // Hostname/port completion
     node_addr: String,
 
     /// Number of mining threads
-    #[arg(short = 't', long, default_value = "1")]
+    #[arg(short = 't', long, default_value = "4", value_hint = ValueHint::Other)]  // Numeric hint
     threads: usize,
+
     #[arg(long = "install-completions", value_name = "SHELL")]
     pub install_completions: Option<String>,
+
     /// Comma-separated list of peer addresses
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::Hostname)]  // Hostname completion for peers
     peers: Option<String>,
 
     /// Skip automatic update check
@@ -103,41 +104,40 @@ struct Cli {
     send: bool,
 
     /// Destination address for sending OWE
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::Other)]  // Could be a wallet address; use Other for custom
     to: Option<String>,
 
     /// Amount to send (can be decimal, e.g. 1.5)
-        #[arg(long)]
-        amount: Option<f64>,
+    #[arg(long, value_hint = ValueHint::Other)]  // Numeric/decimal hint
+    amount: Option<f64>,
 }
 
-#[derive(Subcommand, Clone)]
-enum Command {
-    Daemon,
-    Tui,
-    Mine,
-    MinerUi,
-    WalletInfo,
-    Send,
-    Completions { shell: String, output: Option<String> },
-}
+// enum Command {
+//     Daemon,
+//     Tui,
+//     Mine,
+//     MinerUi,
+//     WalletInfo,
+//     Send,
+//     Completions { shell: String, output: Option<String> },
+// }
 
-fn determine_command(cli: &Cli) -> Command {
-    if cli.send {
-        return Command::Send;
-    }
-    if cli.daemon {
-        Command::Daemon
-    } else if cli.tui {
-        Command::Tui
-    } else if cli.mine {
-        Command::Mine
-    } else if cli.miner_ui {
-        Command::MinerUi
-    } else {
-        Command::WalletInfo
-    }
-}
+// fn determine_command(cli: &Cli) -> Command {
+//     if cli.send {
+//         return Command::Send;
+//     }
+//     if cli.daemon {
+//         Command::Daemon
+//     } else if cli.tui {
+//         Command::Tui
+//     } else if cli.mine {
+//         Command::Mine
+//     } else if cli.miner_ui {
+//         Command::MinerUi
+//     } else {
+//         Command::WalletInfo
+//     }
+// }
 
 fn load_and_merge_config(cli: &Cli) -> anyhow::Result<config::Config> {
     // Load config
@@ -170,24 +170,18 @@ fn load_and_merge_config(cli: &Cli) -> anyhow::Result<config::Config> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Handle completions installation/printing
     if let Some(shell) = &cli.install_completions {
-        let path = completions::install_user_completion(shell)
-            .context("failed to install shell completions")?;
-        println!("Installed completions for {} in {}", shell, path.display());
-        return Ok(());
-    }
-    match &cli.command {
-        Some(Command::Completions { shell, output }) => {
-            if let Some(_out_path) = output {
-                let path = completions::install_user_completion(shell)?;
-                println!("Installed completions for {} in {}", shell, path.display());
-            } else {
-                completions::print_to_stdout(shell)?;
-            }
-            return Ok(());
+        if shell == "stdout" {
+            completions::print_to_stdout("bash")?;  // Default to bash for stdout; adjust as needed
+        } else {
+            let path = completions::install_user_completion(shell)?;
+            println!("Completions installed to: {}", path.display());
         }
-        _ => {}
+        return Ok(());  // Exit early after handling completions
     }
+
     // Compose version string including short git commit (set by build.rs) and print ASCII logo
     let full_version = format!("v{}=>{}", env!("CARGO_PKG_VERSION"), option_env!("GIT_HASH_SHORT").unwrap_or("unknown"));
     println!("{}", ASCII_LOGO.replace("%s", &full_version).purple());
@@ -204,15 +198,19 @@ async fn main() -> anyhow::Result<()> {
     println!("{}", format!("OWONERO-RS {}", full_version).green());
 
     // Route to appropriate command handler
-    match determine_command(&cli) {
-        Command::Daemon => run_daemon_mode(cli.clone(), config.clone()).await,
-        Command::Tui => run_tui_mode().await,
-        Command::Mine => run_mining_mode(cli.clone(), config.clone()).await,
-        Command::MinerUi => run_miner_ui_mode().await,
-        Command::WalletInfo => run_wallet_info_mode(config.clone()).await,
-        Command::Send => run_send_mode(cli.clone(), config.clone()).await,
-        // completions handled earlier; include arm to make match exhaustive
-        Command::Completions { .. } => Ok(()),
+    if cli.daemon {
+        run_daemon_mode(cli, config).await
+    } else if cli.mine {
+        run_mining_mode(cli, config).await
+    } else if cli.tui {
+        run_tui_mode().await
+    } else if cli.miner_ui {
+        run_miner_ui().await  // Note: This calls `run_miner_ui` from miner_ui module, not the unused `run_miner_ui_mode`
+    } else if cli.send {
+        run_send_mode(cli, config).await
+    } else {
+        // Default to wallet info if no mode flag is set
+        run_wallet_info_mode(config).await
     }
 }
 
@@ -305,9 +303,6 @@ async fn run_mining_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
     Ok(())
 }
 
-async fn run_miner_ui_mode() -> anyhow::Result<()> {
-    miner_ui::run_miner_ui().await
-}
 async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     let wallet = config::load_wallet()?;
 
