@@ -220,9 +220,9 @@ pub fn get_blockchain_path() -> std::path::PathBuf {
 
 async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
     let blockchain = if !cli.no_init {
-        let mut bc = blockchain::Blockchain::load_from_file(get_blockchain_path())?;
-        bc.target_block_time = config.target_block_time;
-        bc.save_to_file(get_blockchain_path())?;
+        let mut bc = blockchain::Blockchain::load_from_file(crate::get_blockchain_path())?;
+        eprintln!("Syncing blockchain...");
+        bc.sync(&config.peers).await?;  // Add this line
         bc
     } else {
         blockchain::Blockchain::new()

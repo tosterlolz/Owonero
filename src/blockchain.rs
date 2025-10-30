@@ -9,6 +9,7 @@ use std::fs;
 use anyhow::{Result, anyhow, Context};
 use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use hex;
+use reqwest::Client;
 
 // RandomX-inspired RX/OWO Parameters (module-level so they can be reused without reallocating)
 // These defaults are conservative; they can be tuned with environment variables
@@ -99,6 +100,72 @@ impl Blockchain {
             chain: vec![Self::create_genesis_block()],
             target_block_time: 30,
         }
+    }
+
+    pub async fn sync(&mut self, peers: &[String]) -> Result<()> {
+        if peers.is_empty() {
+            return Err(anyhow!("No peers provided for syncing"));
+        }
+
+        let client = Client::new();
+        let mut max_height = self.chain.last().map(|b| b.index).unwrap_or(0);
+        let mut best_peer = None;
+
+        // Find the peer with the highest block height
+        for peer in peers {
+            let url = format!("{}/height", peer.trim_end_matches('/'));
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(height) = json.get("height").and_then(|v| v.as_u64()) {
+                            if height > max_height {
+                                max_height = height;
+                                best_peer = Some(peer.clone());
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Failed to query height from {}: {}", peer, e),
+            }
+        }
+
+        if best_peer.is_none() {
+            return Err(anyhow!("No valid peers found for syncing"));
+        }
+
+        let best_peer = best_peer.unwrap();
+        let current_height = self.chain.last().map(|b| b.index).unwrap_or(0);
+
+        if max_height <= current_height {
+            eprintln!("Blockchain is already up to date (height: {})", current_height);
+            return Ok(());
+        }
+
+        eprintln!("Syncing from {} to {} using peer {}", current_height + 1, max_height, best_peer);
+
+        // Download and add missing blocks
+        for index in (current_height + 1)..=max_height {
+            let url = format!("{}/block/{}", best_peer.trim_end_matches('/'), index);
+            let resp = client.get(&url).send().await
+                .with_context(|| format!("Failed to fetch block {} from {}", index, best_peer))?;
+
+            let block: Block = resp.json().await
+                .with_context(|| format!("Failed to parse block {} from {}", index, best_peer))?;
+
+            // Validate and add the block
+            let difficulty = self.get_dynamic_difficulty();
+            if self.validate_block(&block, difficulty, false) {
+                self.chain.push(block);
+                eprintln!("Added block {}", index);
+            } else {
+                return Err(anyhow!("Invalid block {} received from {}", index, best_peer));
+            }
+        }
+
+        self.save_to_file(crate::get_blockchain_path())?;
+        eprintln!("Sync complete. New height: {}", self.chain.last().map(|b| b.index).unwrap_or(0));
+
+        Ok(())
     }
 
     pub fn create_genesis_block() -> Block {
