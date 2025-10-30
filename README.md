@@ -2,7 +2,7 @@
 
 ![banner](./assets/owe.png)
 
-Current release: v0.4.3 (dev)
+Current release: v0.4.3 (stable)
 
 A lightweight, proof-of-work blockchain cryptocurrency written in Rust. Features automatic updates, peer-to-peer networking, and efficient mining with the RX/OWO memory-hard algorithm.
 
