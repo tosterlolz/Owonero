@@ -10,6 +10,7 @@ pub struct Wallet {
     pub address: String,
     pub pub_key: String,
     pub priv_key: String,
+    pub node_address: Option<String>,
 }
 
 impl Wallet {
@@ -28,21 +29,30 @@ impl Wallet {
         let pub_key_bytes = key_pair.public_key().as_ref();
 
         Ok(Self {
-            address: Self::generate_address(),
+            // Use the public key hex as the wallet "address" so that
+            // transactions and coinbase rewards can be indexed directly
+            // by the public key. This makes comparisons unambiguous and
+            // avoids separate address-generation logic during development.
+            address: hex::encode(pub_key_bytes),
             pub_key: hex::encode(pub_key_bytes),
             // zapis PKCS#8 jako hex (można też base64)
             priv_key: hex::encode(pkcs8_doc.as_ref()),
+            node_address: None,
         })
     }
 
     pub fn get_balance(&self, blockchain: &crate::blockchain::Blockchain) -> i64 {
+        // Normalize address comparisons to be case-insensitive and trim whitespace.
+        let my_addr = self.address.trim().to_lowercase();
         let mut balance = 0i64;
         for block in &blockchain.chain {
             for tx in &block.transactions {
-                if tx.to == self.address {
+                let tx_to = tx.to.trim().to_lowercase();
+                let tx_from = tx.from.trim().to_lowercase();
+                if tx_to == my_addr {
                     balance += tx.amount;
                 }
-                if tx.from == self.address {
+                if tx_from == my_addr {
                     balance -= tx.amount;
                 }
             }
@@ -71,6 +81,16 @@ pub fn load_or_create_wallet(path: &str) -> Result<Wallet> {
         Ok(wallet)
     } else {
         let wallet = Wallet::new()?;
+        // Attempt to pick up the configured node address automatically so
+        // the wallet file contains a default node to talk to. This is
+        // best-effort and will silently continue if config can't be read.
+        if let Ok(cfg) = crate::config::load_config() {
+            let mut wallet = wallet;
+            wallet.node_address = Some(cfg.node_address);
+            let data = serde_json::to_string_pretty(&wallet)?;
+            fs::write(path, data)?;
+            return Ok(wallet);
+        }
         let data = serde_json::to_string_pretty(&wallet)?;
         fs::write(path, data)?;
         Ok(wallet)

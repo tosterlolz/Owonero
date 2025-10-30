@@ -305,12 +305,17 @@ async fn run_mining_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
 
 async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     let wallet = config::load_wallet()?;
+    // Try to sync the local chain from a configured node. Prefer the node
+    // address stored in the wallet (if present), otherwise fall back to
+    // the CLI/config node address. This allows wallets to remember which
+    // node they primarily communicate with.
+    let node_to_use = wallet.node_address.clone().unwrap_or(config.node_address.clone());
 
-    // Try to sync the local chain from the configured node if enabled.
+    // Load local chain
     let mut blockchain = blockchain::Blockchain::load_from_file("blockchain.json")?;
 
     if config.sync_on_startup {
-        if let Ok(stream) = tokio::net::TcpStream::connect(&config.node_address).await {
+        if let Ok(stream) = tokio::net::TcpStream::connect(&node_to_use).await {
             let (r, mut w) = stream.into_split();
             let mut reader = tokio::io::BufReader::new(r);
 
@@ -327,13 +332,13 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
                         if new_chain.chain.len() > blockchain.chain.len() {
                             blockchain = new_chain;
                             let _ = blockchain.save_to_file("blockchain.json");
-                            println!("Synchronized blockchain from node {}", config.node_address);
+                            println!("Synchronized blockchain from node {}", node_to_use);
                         }
                     }
                 }
             }
         } else {
-            eprintln!("Warning: failed to connect to node {} to sync blockchain", config.node_address);
+            eprintln!("Warning: failed to connect to node {} to sync blockchain", node_to_use);
         }
     }
 

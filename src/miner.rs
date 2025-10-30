@@ -410,7 +410,8 @@ pub async fn start_mining(
     // Mining workers as dedicated OS threads
     let mut worker_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
     for _id in 0..threads {
-        let blockchain = blockchain.clone();
+    let wallet_address = wallet.address.clone();
+    let blockchain = blockchain.clone();
     let mempool_shared = mempool_shared.clone();
     let attempts = attempts.clone();
     let block_sync_tx = block_sync_tx.clone();
@@ -453,11 +454,29 @@ pub async fn start_mining(
                     mp.clone()
                 };
 
+                // Prepend a coinbase transaction that pays the miner's wallet so
+                // mined blocks actually credit the miner. Reward amount can be
+                // configured with OWONERO_BLOCK_REWARD (default: 1).
+                let mut mempool_with_coinbase: Vec<crate::blockchain::Transaction> = Vec::new();
+                let reward_amount: i64 = std::env::var("OWONERO_BLOCK_REWARD")
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(1);
+                mempool_with_coinbase.push(crate::blockchain::Transaction {
+                    from: "coinbase".to_string(),
+                    pub_key: String::new(),
+                    to: wallet_address.clone(),
+                    amount: reward_amount,
+                    signature: String::new(),
+                });
+                // Append existing mempool txs after coinbase
+                mempool_with_coinbase.extend(mempool_txs.into_iter());
+
                 // Mine using the cancellable function
                 let mut local_attempts = 0u64;
                 let block_opt = crate::blockchain::Blockchain::mine_block_with_cancel(
                     &prev_block,
-                    mempool_txs,
+                    mempool_with_coinbase,
                     diff,
                     &mut local_attempts,
                     Some(&*attempts),  // Pass atomic for shared updates
