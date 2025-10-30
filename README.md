@@ -6,7 +6,7 @@ Current release: v0.5.0 (stable)
 
 A lightweight, proof-of-work blockchain cryptocurrency written in Rust. Features automatic updates, peer-to-peer networking, and efficient mining with the RX/OWO memory-hard algorithm.
 
-IMPORTANT: Windows users — we publish release binaries on GitHub releases. If you are on Windows we recommend downloading the pre-built release for convenience and correctness.
+IMPORTANT: we publish release binaries on GitHub releases. If you are on Windows we recommend downloading the pre-built release for convenience and correctness.
 
 ## ✨ Features
 
