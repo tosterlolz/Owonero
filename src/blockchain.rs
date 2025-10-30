@@ -565,8 +565,6 @@ impl Blockchain {
         attempts_atomic: Option<&std::sync::atomic::AtomicU64>,
         chain_version: Option<&std::sync::atomic::AtomicU64>,
     ) -> Option<Block> {
-        let target_prefix = "0".repeat(difficulty as usize);
-
         let mut block = Block {
             index: prev_block.index + 1,
             timestamp: Utc::now(),
@@ -612,17 +610,35 @@ impl Blockchain {
             flush_chunk += 1;
 
             // Periodically flush into the shared atomic counter if provided.
-                if let Some(at) = attempts_atomic {
-                    if flush_chunk >= flush_threshold || last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
-                        at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
-                        // reset chunk after flushing
-                        flush_chunk = 0;
-                        last_flush = Instant::now();
-                    }
+            if let Some(at) = attempts_atomic {
+                if flush_chunk >= flush_threshold || last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
+                    at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
+                    // reset chunk after flushing
+                    flush_chunk = 0;
+                    last_flush = Instant::now();
                 }
+            }
 
-            // Check if hash meets difficulty
-            if block.hash.starts_with(&target_prefix) {
+            // Check if hash meets difficulty (match validate_block's PoW logic)
+            let hash_bytes = hex::decode(&block.hash).unwrap_or_default();
+            let mut valid_pow = true;
+            for i in 0..((difficulty + 1) / 2) {
+                let byte_idx = i as usize;
+                if byte_idx >= hash_bytes.len() {
+                    valid_pow = false;
+                    break;
+                }
+                let byte_val = hash_bytes[byte_idx];
+                if difficulty > i * 2 && byte_val >> 4 != 0 {
+                    valid_pow = false;
+                    break;
+                }
+                if difficulty > i * 2 + 1 && (byte_val & 0x0F) != 0 {
+                    valid_pow = false;
+                    break;
+                }
+            }
+            if valid_pow {
                 // flush any remaining attempts
                 if let Some(at) = attempts_atomic {
                     if flush_chunk > 0 {
@@ -651,22 +667,8 @@ impl Blockchain {
         }
     }
 
-    /// Backwards-compatible wrapper kept for callers that expect the old
-    /// synchronous behaviour. This will block until a valid block is found
-    /// and will not return early on chain updates.
-    pub fn mine_block(
-        prev_block: &Block,
-        transactions: Vec<Transaction>,
-        difficulty: u32,
-        attempts: &mut u64,
-        attempts_atomic: Option<&std::sync::atomic::AtomicU64>,
-    ) -> Block {
-        // Call the cancellable variant with no chain_version so it behaves
-        // like the original function and will not abort early.
-        match Self::mine_block_with_cancel(prev_block, transactions, difficulty, attempts, attempts_atomic, None) {
-            Some(b) => b,
-            None => panic!("mine_block unexpectedly aborted when no chain_version provided"),
-        }
+    pub fn difficulty_to_target(diff: u64) -> String {
+        "0".repeat(diff as usize)
     }
 }
 

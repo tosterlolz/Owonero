@@ -1,4 +1,4 @@
-use crate::blockchain::{Blockchain, Block, Transaction};
+use crate::blockchain::{Blockchain, Block};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,7 +29,7 @@ pub async fn start_mining(
     blocks_to_mine: u64,
     threads: usize,
     pool: bool,
-    intensity: u8,
+    _intensity: u8,
     stats_tx: Option<mpsc::Sender<MinerStats>>,
     log_tx: Option<mpsc::Sender<String>>,
     shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
@@ -39,8 +39,6 @@ pub async fn start_mining(
     // Prefer sending logs into the TUI when available. Fall back to stdout if not.
     if let Some(ref tx) = log_tx {
         let _ = tx.send(format!("Mining for wallet {} to node {}", wallet.address, node_addr)).await;
-    } else {
-        println!("Mining for wallet {} to node {}", wallet.address, node_addr);
     }
 
     // Try to connect to node and fetch the authoritative chain. If the node
@@ -94,6 +92,7 @@ pub async fn start_mining(
     };
 
     let blockchain = Arc::new(Mutex::new(blockchain));
+    let latest_block: Arc<Mutex<Option<Block>>> = Arc::new(Mutex::new(None));
     // Shared mempool (kept in sync with node via poller)
     let mempool_shared: Arc<Mutex<Vec<crate::blockchain::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
     let attempts = Arc::new(AtomicU64::new(0));
@@ -104,12 +103,13 @@ pub async fn start_mining(
 
     // Lightweight std channels to buffer worker->submitter communication without blocking workers
     let (block_sync_tx, block_sync_rx) = std::sync::mpsc::channel::<Block>();
-    let (share_sync_tx, share_sync_rx) = std::sync::mpsc::channel::<(String, u32, u64, Block)>();
-
+    let (_share_sync_tx, share_sync_rx) = std::sync::mpsc::channel::<(String, u32, u64, Block)>();
     // Stats tracking
     let attempts_history: Arc<Mutex<VecDeque<u64>>> = Arc::new(Mutex::new(VecDeque::new()));
     let accepted = Arc::new(AtomicU64::new(0));
     let rejected = Arc::new(AtomicU64::new(0));
+    // Atomic version counter used to abort mining on template changes (prev_hash updates)
+    let chain_version = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let start_time = std::time::Instant::now();
 
     // Shutdown flag shared with OS threads
@@ -137,8 +137,22 @@ pub async fn start_mining(
     let accepted_clone1 = accepted.clone();
     let rejected_clone1 = rejected.clone();
     let mempool_for_submitter = mempool_shared.clone();
+    let latest_block_submitter = latest_block.clone();
+    let chain_version_submitter = chain_version.clone();
     let submitter_handle = tokio::spawn(async move {
         while let Some(block) = block_rx.recv().await {
+            // Check local latest template before submitting. If our local latest doesn't
+            // match the block's prev_hash, the block is stale — notify workers and skip submit.
+            {
+                let local_latest_opt = latest_block_submitter.lock().unwrap().as_ref().map(|b| b.hash.clone());
+                if let Some(local_latest) = local_latest_opt {
+                    if local_latest != block.prev_hash {
+                                chain_version_submitter.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                }
+            }
+
             // Create new connection for each submission
             if let Ok(mut stream) = TcpStream::connect(&node_addr_clone).await {
                 let (reader, mut writer) = stream.split();
@@ -157,12 +171,15 @@ pub async fn start_mining(
                 reader.read_line(&mut response).await?;
                 let response = response.trim();
 
-                if response == "ok" {
+                    if response == "ok" {
                     accepted_clone1.fetch_add(1, Ordering::Relaxed);
                     if let Some(ref tx) = log_tx_clone1 {
                         let _ = tx.send(format!("Block accepted! Index={} Hash={}", block.index, block.hash)).await;
-                    } else {
-                        println!("Block accepted! Index={} Hash={}", block.index, block.hash);
+                    }
+                    {
+                        let mut latest_block_guard = latest_block_submitter.lock().unwrap();
+                        *latest_block_guard = Some(block.clone());
+                        chain_version_submitter.fetch_add(1, Ordering::Relaxed); // chill bro relax
                     }
                     // Remove included transactions from local mempool (except coinbase)
                     {
@@ -174,6 +191,14 @@ pub async fn start_mining(
                     }
                 } else {
                     rejected_clone1.fetch_add(1, Ordering::Relaxed);
+                    // If node rejected due to PrevHash mismatch, log local view to help debugging
+                    if response.contains("PrevHash") || response.contains("prev_hash") || response.contains("PrevHash mismatch") {
+                        let local_latest = latest_block_submitter.lock().unwrap().as_ref().map(|b| b.hash.clone()).unwrap_or_else(|| "<none>".to_string());
+                        let cur_ver = chain_version_submitter.load(Ordering::Relaxed);
+                            if let Some(ref lt) = log_tx_clone1 {
+                                let _ = lt.send(format!("[miner] submitter: node rejected block: {} | submitted.prev_hash={} | local_latest={} | chain_version={}", response, block.prev_hash, local_latest, cur_ver)).await;
+                            }
+                    }
                     if let Some(ref tx) = log_tx_clone1 {
                         let _ = tx.send(format!("Node rejected block: {}", response)).await;
                     } else {
@@ -227,8 +252,6 @@ pub async fn start_mining(
                     accepted_clone2.fetch_add(1, Ordering::Relaxed);
                     if let Some(ref tx) = log_tx_clone2 {
                         let _ = tx.send(format!("Share accepted: {} attempts", attempts_val)).await;
-                    } else {
-                        println!("Share accepted: {} attempts", attempts_val);
                     }
                 } else {
                     rejected_clone2.fetch_add(1, Ordering::Relaxed);
@@ -388,72 +411,73 @@ pub async fn start_mining(
     let mut worker_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
     for _id in 0..threads {
         let blockchain = blockchain.clone();
-        let attempts = attempts.clone();
-        let mined = mined.clone();
-        let wallet = wallet.clone();
-        let shutdown = shutdown_flag.clone();
-        let block_sync_tx = block_sync_tx.clone();
-        let share_sync_tx = share_sync_tx.clone();
-        let mempool_for_worker = mempool_shared.clone();
-
+    let mempool_shared = mempool_shared.clone();
+    let attempts = attempts.clone();
+    let block_sync_tx = block_sync_tx.clone();
+    let shutdown_flag = shutdown_flag.clone();
+    let latest_block_worker = latest_block.clone();
+    let log_tx_worker = log_tx.clone();
+    let chain_version_worker = chain_version.clone();
         let handle = std::thread::spawn(move || {
             loop {
-                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
 
-                // Get block template (lock briefly)
-                let (prev_block, _dyn_diff, diff) = {
-                    let bc = blockchain.lock().unwrap();
-                    let prev_block = bc.chain.last().unwrap().clone();
-                    let dyn_diff = bc.get_dynamic_difficulty();
-                    let diff = if pool { dyn_diff.saturating_sub(2).max(1) } else { dyn_diff };
-                    (prev_block, dyn_diff, diff)
-                };
-
-                // Collect transactions from mempool (clone under lock)
-                let mut txs: Vec<Transaction> = Vec::new();
-                {
-                    let mp = mempool_for_worker.lock().unwrap();
-                    // include up to 10 transactions
-                    for t in mp.iter().take(10) {
-                        txs.push(t.clone());
+                // Get prev_block from latest_block_worker, fallback to local chain with safety check
+                let prev_block = {
+                    if let Some(ref lb) = *latest_block_worker.lock().unwrap() {
+                        lb.clone()
+                    } else {
+                        let bc = blockchain.lock().unwrap();
+                        if let Some(last) = bc.chain.last() {
+                            last.clone()
+                        } else {
+                            // Chain is empty; skip mining until synced
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
                     }
-                }
-
-                let coinbase = Transaction {
-                    from: "coinbase".to_string(),
-                    pub_key: String::new(),
-                    to: wallet.address.clone(),
-                    amount: 1,
-                    signature: String::new(),
                 };
 
-                // Prepend coinbase to transactions included in the block
-                let mut block_txs = Vec::with_capacity(1 + txs.len());
-                block_txs.push(coinbase);
-                block_txs.extend(txs.into_iter());
+                // Get difficulty from local chain
+                let diff = {
+                    let bc = blockchain.lock().unwrap();
+                    let dyn_diff = bc.get_dynamic_difficulty();
+                    if pool { dyn_diff.saturating_sub(2).max(1) } else { dyn_diff }
+                };
 
+                // Get mempool transactions
+                let mempool_txs = {
+                    let mp = mempool_shared.lock().unwrap();
+                    mp.clone()
+                };
+
+                // Mine using the cancellable function
                 let mut local_attempts = 0u64;
-                // Pass a direct reference to the shared atomic so mine_block can
-                // flush attempt counts periodically for responsive hashrate reporting.
-                let block = Blockchain::mine_block(&prev_block, block_txs, diff, &mut local_attempts, Some(&*attempts));
+                let block_opt = crate::blockchain::Blockchain::mine_block_with_cancel(
+                    &prev_block,
+                    mempool_txs,
+                    diff,
+                    &mut local_attempts,
+                    Some(&*attempts),  // Pass atomic for shared updates
+                    Some(&*chain_version_worker),  // Abort on chain version change
+                );
 
-                if pool {
-                    let share = (wallet.address.clone(), block.nonce, local_attempts, block);
-                    // Send to std sync channel so workers never block on async channel fullness
-                    let _ = share_sync_tx.send(share);
+                // Update attempts
+                attempts.fetch_add(local_attempts, Ordering::Relaxed);
+
+                if let Some(block) = block_opt {
+                    // Check hash against target
+                    let target = crate::blockchain::Blockchain::difficulty_to_target(diff as u64);
+                    if block.hash.starts_with(&target) {
+                        let _ = block_sync_tx.send(block);
+                    }
                 } else {
-                    mined.fetch_add(1, Ordering::Relaxed);
-                    // Send to std sync channel so workers never block on async channel fullness
-                    let _ = block_sync_tx.send(block);
-                }
-
-                // CPU throttling (blocking sleep)
-                if intensity < 100 {
-                    let throttle_ms = ((100 - intensity) as f64 / 100.0 * 10.0) as u64;
-                    if throttle_ms > 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(throttle_ms));
+                    // Mining aborted (likely due to chain_version change). Log for diagnostics.
+                    let cur_ver = chain_version_worker.load(Ordering::Relaxed);
+                    if let Some(ref lt) = log_tx_worker {
+                        let _ = lt.try_send(format!("[miner] worker abort: chain_version={} prev_hash_template={}", cur_ver, prev_block.hash));
                     }
                 }
             }
@@ -465,39 +489,34 @@ pub async fn start_mining(
     // Background poller: keep local blockchain copy up-to-date by polling node periodically.
     // This reduces wasted work when other miners find blocks and the local template becomes stale.
     let _blockchain_poller = {
-        let blockchain = blockchain.clone();
         let node_addr = node_addr.to_string();
         let shutdown = shutdown_flag.clone();
+        let latest_block_poller = latest_block.clone();
+        let chain_version_poller = chain_version.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            let mut interval = tokio::time::interval(Duration::from_millis(500));  // More frequent updates
             loop {
                 interval.tick().await;
                 if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
 
-                match TcpStream::connect(&node_addr).await {
-                    Ok(s) => {
-                        let (r, mut w) = s.into_split();
-                        let mut r = BufReader::new(r);
-                        // Skip greeting
-                        let mut tmp = String::new();
-                        let _ = r.read_line(&mut tmp).await;
-                        // Request chain
-                        let _ = w.write_all(b"getchain\n").await;
-                        let mut chain_line = String::new();
-                        if r.read_line(&mut chain_line).await.is_ok() {
-                            if let Ok(new_chain) = serde_json::from_str::<crate::blockchain::Blockchain>(chain_line.trim()) {
-                                let mut bc_lock = blockchain.lock().unwrap();
-                                // If newer, replace local copy
-                                if new_chain.chain.len() > bc_lock.chain.len() {
-                                    *bc_lock = new_chain;
-                                }
+                if let Ok(mut stream) = TcpStream::connect(&node_addr).await {
+                    let (r, mut w) = stream.split();
+                    let mut r = BufReader::new(r);
+                    // Skip greeting
+                    let mut tmp = String::new();
+                    let _ = r.read_line(&mut tmp).await;
+                    // Request latest block
+                    if w.write_all(b"getlatest\n").await.is_ok() {
+                        let mut block_line = String::new();
+                        if r.read_line(&mut block_line).await.is_ok() {
+                            if let Ok(block) = serde_json::from_str::<Block>(block_line.trim()) {
+                                *latest_block_poller.lock().unwrap() = Some(block);
+                                // Notify workers to abort current templates so they don't mine on a stale prev_hash
+                                chain_version_poller.fetch_add(1, Ordering::Relaxed);
                             }
                         }
-                    }
-                    Err(_) => {
-                        // ignore connection errors; will retry on next tick
                     }
                 }
             }

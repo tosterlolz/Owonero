@@ -123,6 +123,17 @@ async fn handle_connection(
                 let peers_json = serde_json::to_string(&peers)?;
                 writer.write_all(format!("{}\n", peers_json).as_bytes()).await?;
             }
+            "getlatest" => {
+                let response = {
+                    let bc = blockchain.lock().unwrap();
+                    if let Some(latest) = bc.chain.last() {
+                        serde_json::to_string(latest)?
+                    } else {
+                        serde_json::to_string(&serde_json::Value::Null)?
+                    }
+                };
+                writer.write_all(format!("{}\n", response).as_bytes()).await?;
+            }
             "getmempool" => {
                 let data = {
                     let mp = mempool.lock().unwrap();
