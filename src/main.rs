@@ -13,6 +13,8 @@ use colored::Colorize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::miner_ui::run_miner_ui;
+use std::fs;
+use serde_json;
 
 const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⡐⢀⣾⣷⠪⠑⠛⠛⠛⠂⠠⠶⢶⣿⣦⡀⠀⠈⢐⢠⣑⠤⣀⠀⠀⠀
@@ -187,6 +189,31 @@ async fn main() -> anyhow::Result<()> {
     println!("{}", ASCII_LOGO.replace("%s", &full_version).purple());
 
     let config = load_and_merge_config(&cli)?;
+
+    // Ensure a wallet exists in the config directory. Try to load it; if it
+    // doesn't exist or loading fails, create a new wallet and save it so the
+    // rest of the program can assume a wallet file is present.
+    match config::load_wallet() {
+        Ok(_) => {
+            // wallet exists or was created by load_wallet()
+        }
+        Err(e) => {
+            eprintln!("Wallet not found or failed to load: {}. Creating a new wallet...", e);
+            match crate::wallet::Wallet::new() {
+                Ok(wallet) => {
+                    let path = crate::config::get_wallet_path();
+                    if let Ok(data) = serde_json::to_string_pretty(&wallet) {
+                        if let Err(err) = fs::write(&path, data) {
+                            eprintln!("Failed to write new wallet to {}: {}", path.display(), err);
+                        } else {
+                            eprintln!("Created new wallet at {}", path.display());
+                        }
+                    }
+                }
+                Err(err) => eprintln!("Failed to generate new wallet: {}", err),
+            }
+        }
+    }
 
     // Check for updates if enabled
     if config.auto_update {
