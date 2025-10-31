@@ -831,6 +831,12 @@ impl Blockchain {
         // Default: 0.5 OWE = 500 internal units
         500
     }
+
+    /// Format an internal-unit amount (i64) as a human-friendly OWE string.
+    /// Example: 500 -> "0.500 OWE"
+    pub fn format_owe(amount: i64) -> String {
+        format!("{:.3} OWE", (amount as f64) / 1000.0)
+    }
 }
 
 #[derive(Serialize)]

@@ -6,14 +6,13 @@ mod miner;
 mod miner_ui;
 mod update;
 mod wallet;
-// wallet_ui removed: CLI-only sending is used
+mod ws_client;
 
 use clap::{Parser, ValueHint};
 use colored::Colorize;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-use crate::miner_ui::run_miner_ui;
 use serde_json;
 
 const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
@@ -233,8 +232,6 @@ async fn main() -> anyhow::Result<()> {
         run_daemon_mode(cli, config).await
     } else if cli.mine {
         run_mining_mode(cli, config).await
-    } else if cli.miner_ui {
-        run_miner_ui().await // Note: This calls `run_miner_ui` from miner_ui module, not the unused `run_miner_ui_mode`
     } else if cli.send {
         // CLI send mode: owonero --send --amount <amt> --to <pubkey>
         run_send_mode(cli, config).await
@@ -261,9 +258,8 @@ async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
     }
 
     let daemon_port = config.daemon_port;
-    // web_port and daemon_addr removed since HTTP API is not used
 
-    // Spawn TCP daemon
+    // Spawn WebSocket daemon
     let standalone = cli.standalone;
     let daemon_handle = tokio::spawn(async move {
         if let Err(e) =
