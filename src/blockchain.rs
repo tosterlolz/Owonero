@@ -498,7 +498,10 @@ impl Blockchain {
 
         for tx in &block.transactions {
             if tx.amount <= 0 {
-                eprintln!("Block {} validation failed: Non-positive tx amount", block.index);
+                eprintln!(
+                    "Block {} validation failed: Non-positive tx amount",
+                    block.index
+                );
                 return false;
             }
             if tx.from == "coinbase" {
@@ -816,6 +819,17 @@ impl Blockchain {
 
     pub fn difficulty_to_target(diff: u64) -> String {
         "0".repeat(diff as usize)
+    }
+
+    /// Get the block reward (in internal units) for the given block height.
+    ///
+    /// Rewards are expressed in internal atomic units (1 OWE == 1000 units).
+    /// Default policy: fixed 0.5 OWE per block (500 internal units). This
+    /// function centralizes reward calculation so it can be changed (halvings,
+    /// era-based schedules) without touching miner logic.
+    pub fn get_block_reward(&self, _height: u64) -> i64 {
+        // Default: 0.5 OWE = 500 internal units
+        500
     }
 }
 

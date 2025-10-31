@@ -491,7 +491,8 @@ async fn handle_connection(
                     // Compute on-chain balances
                     let balances = {
                         let bc = blockchain.lock().unwrap();
-                        let mut map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+                        let mut map: std::collections::HashMap<String, i64> =
+                            std::collections::HashMap::new();
                         for b in &bc.chain {
                             for t in &b.transactions {
                                 let to = t.to.trim().to_lowercase();
@@ -509,7 +510,11 @@ async fn handle_connection(
                     let pending_out: i64 = {
                         let mp = mempool.lock().unwrap();
                         mp.iter()
-                            .filter(|t| t.from.trim().eq_ignore_ascii_case(&tx.from.trim().to_lowercase()))
+                            .filter(|t| {
+                                t.from
+                                    .trim()
+                                    .eq_ignore_ascii_case(&tx.from.trim().to_lowercase())
+                            })
                             .map(|t| t.amount)
                             .sum()
                     };

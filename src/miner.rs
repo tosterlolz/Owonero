@@ -573,16 +573,14 @@ pub async fn start_mining(
                     mp.clone()
                 };
 
-                // Prepend a coinbase transaction that pays the miner's wallet so
-                // mined blocks actually credit the miner. Reward amount can be
-                // configured with OWONERO_BLOCK_REWARD (default: 1).
+                
                 let mut mempool_with_coinbase: Vec<crate::blockchain::Transaction> = Vec::new();
-                // Block reward is specified in OWE (decimal). Convert to internal units (milli-OWE)
-                let reward_amount: i64 = std::env::var("OWONERO_BLOCK_REWARD")
-                    .ok()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .map(|v| (v * 1000.0).round() as i64)
-                    .unwrap_or(1000); // default: 1 OWE -> 1000 internal units
+                // Determine block reward via blockchain policy (internal units)
+                let reward_amount: i64 = {
+                    let bc = blockchain.lock().unwrap();
+                    // next block height is prev_block.index + 1
+                    bc.get_block_reward(prev_block.index + 1)
+                };
                 let mut coinbase_tx = crate::blockchain::Transaction {
                     from: "coinbase".to_string(),
                     pub_key: wallet_pub_key.clone(),

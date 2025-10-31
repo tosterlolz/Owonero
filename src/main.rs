@@ -46,7 +46,6 @@ struct Cli {
     daemon: bool,
 
     // TUI removed; use CLI flags (--send --to --amount) for sending
-
     /// Show miner TUI during mining
     #[arg(long)]
     miner_ui: bool,
@@ -374,9 +373,9 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
             if w.write_all(b"getlatest\n").await.is_ok() {
                 let mut latest_line = String::new();
                 if reader.read_line(&mut latest_line).await.is_ok() {
-                    if let Ok(node_latest) = serde_json::from_str::<crate::blockchain::Block>(
-                        latest_line.trim(),
-                    ) {
+                    if let Ok(node_latest) =
+                        serde_json::from_str::<crate::blockchain::Block>(latest_line.trim())
+                    {
                         let local_height = blockchain.chain.last().map(|b| b.index).unwrap_or(0);
                         let node_height = node_latest.index;
                         if node_height > local_height {
@@ -429,10 +428,7 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!(
-                                            "Failed to parse block {} from node: {}",
-                                            idx, e
-                                        );
+                                        eprintln!("Failed to parse block {} from node: {}", idx, e);
                                         success = false;
                                         break;
                                     }
@@ -440,18 +436,25 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
                             }
 
                             if success {
-                                let _ = blockchain.save_to_file(crate::config::get_blockchain_path());
-                                println!("Partial sync complete: new height {}", blockchain.chain.last().map(|b| b.index).unwrap_or(0));
+                                let _ =
+                                    blockchain.save_to_file(crate::config::get_blockchain_path());
+                                println!(
+                                    "Partial sync complete: new height {}",
+                                    blockchain.chain.last().map(|b| b.index).unwrap_or(0)
+                                );
                             } else {
                                 // Fallback: request full chain if partial sync failed
-                                eprintln!("Partial sync failed; attempting full chain fetch as fallback");
+                                eprintln!(
+                                    "Partial sync failed; attempting full chain fetch as fallback"
+                                );
                                 // Rewind the reader/writer by asking getchain
                                 if w.write_all(b"getchain\n").await.is_ok() {
                                     let mut chain_line = String::new();
                                     if reader.read_line(&mut chain_line).await.is_ok() {
-                                        if let Ok(new_chain) = serde_json::from_str::<
-                                            crate::blockchain::Blockchain,
-                                        >(chain_line.trim())
+                                        if let Ok(new_chain) =
+                                            serde_json::from_str::<crate::blockchain::Blockchain>(
+                                                chain_line.trim(),
+                                            )
                                         {
                                             if new_chain.chain.len() > blockchain.chain.len() {
                                                 blockchain = new_chain;
@@ -475,13 +478,14 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
                             let mut chain_line = String::new();
                             if reader.read_line(&mut chain_line).await.is_ok() {
                                 if let Ok(new_chain) =
-                                    serde_json::from_str::<crate::blockchain::Blockchain>(chain_line.trim())
+                                    serde_json::from_str::<crate::blockchain::Blockchain>(
+                                        chain_line.trim(),
+                                    )
                                 {
                                     if new_chain.chain.len() > blockchain.chain.len() {
                                         blockchain = new_chain;
-                                        let _ = blockchain.save_to_file(
-                                            crate::config::get_blockchain_path(),
-                                        );
+                                        let _ = blockchain
+                                            .save_to_file(crate::config::get_blockchain_path());
                                         println!(
                                             "Synchronized blockchain from node {}",
                                             node_to_use
@@ -504,7 +508,12 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     let balance = wallet.get_balance(&blockchain);
 
     println!("{} {}", "Wallet:".blue(), wallet.address);
-    println!("{} {}", "Balance:".yellow(), balance);
+    // Display balance in human-friendly OWE (1 OWE == 1000 internal units)
+    println!(
+        "{} {:.3} OWE",
+        "Balance:".yellow(),
+        (balance as f64) / 1000.0
+    );
     println!("{} {}", "Chain height:".cyan(), blockchain.chain.len() - 1);
 
     // Diagnostic: list any transactions that involve this wallet so the user
@@ -524,7 +533,14 @@ async fn run_tx_history_mode(config: config::Config) -> anyhow::Result<()> {
 
     // Optionally try to sync from the configured node to get up-to-date data
     if config.sync_on_startup {
-        if let Ok(stream) = tokio::net::TcpStream::connect(&wallet.node_address.clone().unwrap_or(config.node_address.clone())).await {
+        if let Ok(stream) = tokio::net::TcpStream::connect(
+            &wallet
+                .node_address
+                .clone()
+                .unwrap_or(config.node_address.clone()),
+        )
+        .await
+        {
             let (r, mut w) = stream.into_split();
             let mut reader = tokio::io::BufReader::new(r);
 
@@ -536,7 +552,9 @@ async fn run_tx_history_mode(config: config::Config) -> anyhow::Result<()> {
             if w.write_all(b"getchain\n").await.is_ok() {
                 let mut chain_line = String::new();
                 if reader.read_line(&mut chain_line).await.is_ok() {
-                    if let Ok(new_chain) = serde_json::from_str::<crate::blockchain::Blockchain>(chain_line.trim()) {
+                    if let Ok(new_chain) =
+                        serde_json::from_str::<crate::blockchain::Blockchain>(chain_line.trim())
+                    {
                         if new_chain.chain.len() > blockchain.chain.len() {
                             blockchain = new_chain;
                         }
@@ -550,7 +568,11 @@ async fn run_tx_history_mode(config: config::Config) -> anyhow::Result<()> {
 
     println!("Transaction history for wallet: {}", wallet.address);
     // Try to fetch mempool from node and show pending txs involving this wallet
-    if let Some(mut node_addr) = wallet.node_address.clone().or(Some(config.node_address.clone())) {
+    if let Some(mut node_addr) = wallet
+        .node_address
+        .clone()
+        .or(Some(config.node_address.clone()))
+    {
         if node_addr.starts_with("http://") {
             node_addr = node_addr.trim_start_matches("http://").to_string();
         } else if node_addr.starts_with("https://") {
@@ -567,20 +589,30 @@ async fn run_tx_history_mode(config: config::Config) -> anyhow::Result<()> {
             if w.write_all(b"getmempool\n").await.is_ok() {
                 let mut mempool_line = String::new();
                 if reader.read_line(&mut mempool_line).await.is_ok() {
-                    if let Ok(mempool_vec) = serde_json::from_str::<Vec<crate::blockchain::Transaction>>(mempool_line.trim()) {
+                    if let Ok(mempool_vec) = serde_json::from_str::<
+                        Vec<crate::blockchain::Transaction>,
+                    >(mempool_line.trim())
+                    {
                         let mut found = false;
                         for tx in mempool_vec.iter() {
-                            if tx.to.trim().to_lowercase() == my_addr || tx.from.trim().to_lowercase() == my_addr {
+                            if tx.to.trim().to_lowercase() == my_addr
+                                || tx.from.trim().to_lowercase() == my_addr
+                            {
                                 if !found {
                                     println!("PENDING transactions in mempool:");
                                     found = true;
                                 }
-                                    let dir = if tx.to.trim().to_lowercase() == my_addr { "IN" } else { "OUT" };
-                                    println!("{} pending: {} -> {} amount: {} sig={}",
+                                let dir = if tx.to.trim().to_lowercase() == my_addr {
+                                    "IN"
+                                } else {
+                                    "OUT"
+                                };
+                                println!(
+                                    "{} pending: {} -> {} amount: {} sig={}",
                                     dir,
                                     &tx.from[..std::cmp::min(8, tx.from.len())],
                                     &tx.to[..std::cmp::min(8, tx.to.len())],
-                                        (tx.amount as f64) / 1000.0,
+                                    (tx.amount as f64) / 1000.0,
                                     &tx.signature[..std::cmp::min(16, tx.signature.len())]
                                 );
                             }
@@ -666,7 +698,8 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
     w.write_all(b"submittx\n").await?;
     let tx_json = serde_json::to_string(&tx)?;
     // Debug: print tx summary (not private key)
-    println!("Sending tx: from={} to={} amount={} signature_prefix={}",
+    println!(
+        "Sending tx: from={} to={} amount={} signature_prefix={}",
         &tx.from[..std::cmp::min(8, tx.from.len())],
         &tx.to[..std::cmp::min(8, tx.to.len())],
         (tx.amount as f64) / 1000.0,
@@ -729,7 +762,10 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
         // If node rejected due to signature, print local verification result for debugging
         if resp.starts_with("rejected") || resp.starts_with("error") {
             let valid = crate::blockchain::verify_transaction_signature(&tx, &tx.pub_key);
-            println!("Local signature verification: {}", if valid { "OK" } else { "FAILED" });
+            println!(
+                "Local signature verification: {}",
+                if valid { "OK" } else { "FAILED" }
+            );
         }
 
         // Immediately probe the node's mempool to confirm the tx is present (helpful when "ok" is returned)
@@ -743,11 +779,20 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
             if w2.write_all(b"getmempool\n").await.is_ok() {
                 let mut memline = String::new();
                 if rbuf.read_line(&mut memline).await.is_ok() {
-                    if let Ok(mempool_vec) = serde_json::from_str::<Vec<crate::blockchain::Transaction>>(memline.trim()) {
+                    if let Ok(mempool_vec) =
+                        serde_json::from_str::<Vec<crate::blockchain::Transaction>>(memline.trim())
+                    {
                         let mut found = false;
                         for ptx in mempool_vec.iter() {
-                            if ptx.signature == tx.signature || (ptx.from == tx.from && ptx.to == tx.to && ptx.amount == tx.amount) {
-                                println!("Probe: transaction is present in node mempool (signature prefix={})", &ptx.signature[..std::cmp::min(16, ptx.signature.len())]);
+                            if ptx.signature == tx.signature
+                                || (ptx.from == tx.from
+                                    && ptx.to == tx.to
+                                    && ptx.amount == tx.amount)
+                            {
+                                println!(
+                                    "Probe: transaction is present in node mempool (signature prefix={})",
+                                    &ptx.signature[..std::cmp::min(16, ptx.signature.len())]
+                                );
                                 found = true;
                                 break;
                             }
