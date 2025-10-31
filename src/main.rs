@@ -251,8 +251,10 @@ async fn main() -> anyhow::Result<()> {
 async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
     let blockchain = if !cli.no_init {
         let mut bc = blockchain::Blockchain::load_from_file(crate::config::get_blockchain_path())?;
-        eprintln!("Syncing blockchain...");
-        bc.sync(&config.peers).await?;  // Add this line
+        if !cli.standalone {
+            eprintln!("Syncing blockchain...");
+            bc.sync(&config.peers).await?;
+        }
         bc
     } else {
         blockchain::Blockchain::new()
