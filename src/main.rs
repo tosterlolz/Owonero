@@ -40,6 +40,9 @@ const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀�
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Owonero cryptocurrency miner/daemon")]
 struct Cli {
+    /// Run daemon in standalone mode (no peers)
+    #[arg(short = 's', long)]
+    standalone: bool,
     /// Run as daemon
     #[arg(short, long)]
     daemon: bool,
@@ -268,8 +271,9 @@ async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
     let daemon_addr = format!("127.0.0.1:{}", daemon_port);
 
     // Spawn TCP daemon
+    let standalone = cli.standalone;
     let daemon_handle = tokio::spawn(async move {
-        if let Err(e) = daemon::run_daemon(daemon_port, blockchain, pm, config.pool).await {
+        if let Err(e) = daemon::run_daemon(daemon_port, blockchain, pm, config.pool, standalone).await {
             eprintln!("Daemon error: {}", e);
         }
     });

@@ -28,7 +28,7 @@ impl PeerManager {
     }
 }
 
-pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<PeerManager>, pool: bool) -> anyhow::Result<()> {
+pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<PeerManager>, pool: bool, standalone: bool) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     println!("Daemon listening on :{}", port);
 
@@ -72,11 +72,11 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
             }
         };
         let blockchain = blockchain.clone();
-        let pm = pm.clone();
         let shares = shares.clone();
         let mempool = mempool.clone();
         let wallet_hashrates = wallet_hashrates.clone();
         let pool = pool;
+        let pm = if standalone { Arc::new(PeerManager::new()) } else { pm.clone() };
 
         tokio::spawn(async move {
             if let Err(e) = handle_connection(socket, blockchain, pm, shares, mempool, wallet_hashrates, pool).await {
