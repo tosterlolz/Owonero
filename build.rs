@@ -1,6 +1,6 @@
-use std::process::Command;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 fn read_git_head_ref() -> Option<String> {
     // Try to read .git/HEAD and resolve the ref
@@ -46,10 +46,16 @@ fn read_git_head_ref() -> Option<String> {
 
 fn main() {
     let git_hash = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"]) 
+        .args(["rev-parse", "--short", "HEAD"])
         .output()
         .ok()
-        .and_then(|o| if o.status.success() { Some(o.stdout) } else { None })
+        .and_then(|o| {
+            if o.status.success() {
+                Some(o.stdout)
+            } else {
+                None
+            }
+        })
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .map(|s| s.trim().to_string())
         .or_else(|| {

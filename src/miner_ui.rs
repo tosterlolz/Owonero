@@ -1,15 +1,19 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::Terminal;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
@@ -104,15 +108,29 @@ impl MinerUI {
                 .split(size);
 
             // Header with ascii (inject build version/commit)
-            let full_version = format!("v{}=>{}", env!("CARGO_PKG_VERSION"), option_env!("GIT_HASH_SHORT").unwrap_or("unknown"));
+            let full_version = format!(
+                "v{}=>{}",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("GIT_HASH_SHORT").unwrap_or("unknown")
+            );
             let ascii = ASCII_LOGO.replace("%s", &full_version);
             let header = Paragraph::new(ascii)
-                .block(Block::default().borders(Borders::ALL).title("OWONERO MINER"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("OWONERO MINER"),
+                )
                 .style(Style::default().fg(Color::Cyan));
             f.render_widget(header, chunks[0]);
 
             // Hashrate chart
-            draw_hashrate_chart_static(f, chunks[1], stats, hashrate_history, self.displayed_hashrate);
+            draw_hashrate_chart_static(
+                f,
+                chunks[1],
+                stats,
+                hashrate_history,
+                self.displayed_hashrate,
+            );
 
             // Statistics
             draw_stats_static(f, chunks[2], stats);
@@ -127,7 +145,12 @@ impl MinerUI {
         Ok(())
     }
 
-    pub async fn run(&mut self, mut stats_rx: mpsc::Receiver<MinerStats>, mut log_rx: mpsc::Receiver<String>, shutdown_tx: Option<tokio::sync::watch::Sender<bool>>) -> anyhow::Result<()> {
+    pub async fn run(
+        &mut self,
+        mut stats_rx: mpsc::Receiver<MinerStats>,
+        mut log_rx: mpsc::Receiver<String>,
+        shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    ) -> anyhow::Result<()> {
         let mut last_draw = Instant::now();
         let mut last_stats: Option<MinerStats> = None;
 
@@ -218,7 +241,13 @@ impl Drop for MinerUI {
     }
 }
 
-fn draw_hashrate_chart_static(f: &mut ratatui::Frame, area: Rect, stats: Option<&MinerStats>, hashrate_history: &[f64], displayed_hashrate: f64) {
+fn draw_hashrate_chart_static(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    stats: Option<&MinerStats>,
+    hashrate_history: &[f64],
+    displayed_hashrate: f64,
+) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Hashrate (H/s)");
@@ -234,7 +263,11 @@ fn draw_hashrate_chart_static(f: &mut ratatui::Frame, area: Rect, stats: Option<
 
         if !hashrate_history.is_empty() {
             let max_rate = hashrate_history.iter().cloned().fold(0.0f64, f64::max);
-            let scale = if max_rate > 0.0 { chart_height as f64 / max_rate } else { 1.0 };
+            let scale = if max_rate > 0.0 {
+                chart_height as f64 / max_rate
+            } else {
+                1.0
+            };
 
             for (i, &rate) in hashrate_history.iter().enumerate() {
                 if i >= chart_width {
@@ -248,10 +281,8 @@ fn draw_hashrate_chart_static(f: &mut ratatui::Frame, area: Rect, stats: Option<
 
                     if y < inner_area.y + inner_area.height && x < inner_area.x + inner_area.width {
                         let symbol = if j == bar_height - 1 { '█' } else { '█' };
-                        let span = Span::styled(
-                            symbol.to_string(),
-                            Style::default().fg(Color::Green),
-                        );
+                        let span =
+                            Span::styled(symbol.to_string(), Style::default().fg(Color::Green));
                         f.buffer_mut().set_span(x, y, &span, inner_area.width);
                     }
                 }
@@ -260,8 +291,7 @@ fn draw_hashrate_chart_static(f: &mut ratatui::Frame, area: Rect, stats: Option<
 
         // Current hashrate text (use smoothed displayed_hashrate)
         let hashrate_text = format!("Current: {}", format_hashrate(displayed_hashrate as u64));
-        let text = Paragraph::new(hashrate_text)
-            .style(Style::default().fg(Color::White));
+        let text = Paragraph::new(hashrate_text).style(Style::default().fg(Color::White));
         f.render_widget(text, inner_area);
     }
 }
@@ -292,9 +322,18 @@ fn draw_stats_static(f: &mut ratatui::Frame, area: Rect, stats: Option<&MinerSta
 }
 
 fn draw_logs_static(f: &mut ratatui::Frame, area: Rect, logs: &[String]) {
-    let log_text: Vec<Line> = logs.iter().rev().take(20).rev().map(|log| {
-        Line::from(vec![Span::styled(log.clone(), Style::default().fg(Color::White))])
-    }).collect();
+    let log_text: Vec<Line> = logs
+        .iter()
+        .rev()
+        .take(20)
+        .rev()
+        .map(|log| {
+            Line::from(vec![Span::styled(
+                log.clone(),
+                Style::default().fg(Color::White),
+            )])
+        })
+        .collect();
 
     let logs_widget = Paragraph::new(log_text)
         .block(Block::default().borders(Borders::ALL).title("Logs"))

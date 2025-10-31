@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING, KeyPair};
-use ring::rand::SystemRandom;
 use anyhow::{Result, anyhow};
 use hex;
+use ring::rand::SystemRandom;
+use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wallet {
@@ -18,8 +18,9 @@ impl Wallet {
         let pkcs8_doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
             .map_err(|_| anyhow!("Failed to generate key pair"))?;
 
-        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8_doc.as_ref(), &rng)
-            .map_err(|_| anyhow!("Failed to load key pair"))?;
+        let key_pair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8_doc.as_ref(), &rng)
+                .map_err(|_| anyhow!("Failed to load key pair"))?;
 
         let pub_key_bytes = key_pair.public_key().as_ref();
 
@@ -55,7 +56,11 @@ impl Wallet {
         balance
     }
 
-    pub fn create_signed_transaction(&self, to: &str, amount: i64) -> Result<crate::blockchain::Transaction> {
+    pub fn create_signed_transaction(
+        &self,
+        to: &str,
+        amount: i64,
+    ) -> Result<crate::blockchain::Transaction> {
         let mut tx = crate::blockchain::Transaction {
             from: self.address.clone(),
             pub_key: self.pub_key.clone(),
@@ -100,8 +105,8 @@ pub fn load_or_create_wallet(path: &str) -> Result<Wallet> {
             wallet.node_address = Some(cfg.node_address);
         }
 
-    let data = serde_json::to_string_pretty(&wallet)?;
-    std::fs::write(&expanded_path, data)?;
-    Ok(wallet)
+        let data = serde_json::to_string_pretty(&wallet)?;
+        std::fs::write(&expanded_path, data)?;
+        Ok(wallet)
     }
 }

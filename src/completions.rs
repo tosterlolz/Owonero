@@ -1,9 +1,12 @@
+use crate::Cli;
+use anyhow::{Result, anyhow};
+use clap::CommandFactory;
+use clap_complete::{
+    generate, generate_to,
+    shells::{Bash, Fish, PowerShell, Zsh},
+};
 use std::fs;
 use std::path::PathBuf;
-use clap::CommandFactory;
-use clap_complete::{generate, generate_to, shells::{Bash, Zsh, Fish, PowerShell}};
-use anyhow::{Result, anyhow};
-use crate::Cli;
 
 pub fn print_to_stdout(shell: &str) -> Result<()> {
     let mut cmd = Cli::command();

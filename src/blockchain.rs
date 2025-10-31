@@ -1,15 +1,16 @@
-use serde::{Deserialize, Serialize};
-use sha3::Digest;
-use std::env;
-use std::path::Path;
-use std::time::{Duration, Instant};
-use std::cell::RefCell;
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use std::fs;
-use anyhow::{Result, anyhow, Context};
-use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use hex;
 use reqwest::Client;
+use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair};
+use serde::{Deserialize, Serialize};
+use sha3::Digest;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::env;
+use std::fs;
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 // RandomX-inspired RX/OWO Parameters (module-level so they can be reused without reallocating)
 // These defaults are conservative; they can be tuned with environment variables
@@ -27,14 +28,14 @@ thread_local! {
     static SCRATCHPAD_BUF: RefCell<Vec<u8>> = RefCell::new(init_scratchpad());
 }
 
-
 // NOTE: the cancellable mining helper is implemented as an associated
 // function on `Blockchain` below. Keeping a single implementation avoids
 // duplication and potential name-resolution/visibility confusion.
 
 fn init_scratchpad() -> Vec<u8> {
     // Allow adjusting scratchpad size with environment variable (bytes)
-    let size = std::env::var("OWONERO_SCRATCHPAD_SIZE").ok()
+    let size = std::env::var("OWONERO_SCRATCHPAD_SIZE")
+        .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .filter(|&v| v >= 1024)
         .unwrap_or(SCRATCHPAD_SIZE);
@@ -42,25 +43,39 @@ fn init_scratchpad() -> Vec<u8> {
     let mut buf = vec![0u8; size];
 
     // Only attempt to enable transparent huge pages when user opts in.
-    let try_huge = std::env::var("OWONERO_USE_HUGEPAGES").map(|v| v != "0" && v.to_lowercase() != "false").unwrap_or(false);
+    let try_huge = std::env::var("OWONERO_USE_HUGEPAGES")
+        .map(|v| v != "0" && v.to_lowercase() != "false")
+        .unwrap_or(false);
     if try_huge {
         #[cfg(target_os = "linux")]
         {
             use std::io;
             unsafe {
-                let ret = libc::madvise(buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MADV_HUGEPAGE);
+                let ret = libc::madvise(
+                    buf.as_mut_ptr() as *mut libc::c_void,
+                    buf.len(),
+                    libc::MADV_HUGEPAGE,
+                );
                 if ret == 0 {
-                    eprintln!("OWONERO: attempted MADV_HUGEPAGE for scratchpad ({} bytes)", buf.len());
+                    eprintln!(
+                        "OWONERO: attempted MADV_HUGEPAGE for scratchpad ({} bytes)",
+                        buf.len()
+                    );
                 } else {
                     let err = io::Error::last_os_error();
-                    eprintln!("OWONERO: MADV_HUGEPAGE failed: {}. Falling back to normal pages.", err);
+                    eprintln!(
+                        "OWONERO: MADV_HUGEPAGE failed: {}. Falling back to normal pages.",
+                        err
+                    );
                 }
             }
         }
 
         #[cfg(target_os = "windows")]
         {
-            eprintln!("OWONERO: OWONERO_USE_HUGEPAGES=1 set on Windows, but automatic large page allocation is not implemented; falling back to normal pages.");
+            eprintln!(
+                "OWONERO: OWONERO_USE_HUGEPAGES=1 set on Windows, but automatic large page allocation is not implemented; falling back to normal pages."
+            );
         }
     }
 
@@ -85,8 +100,6 @@ pub struct Transaction {
     pub amount: i64,
     pub signature: String,
 }
-
-
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain {
@@ -137,19 +150,31 @@ impl Blockchain {
         let current_height = self.chain.last().map(|b| b.index).unwrap_or(0);
 
         if max_height <= current_height {
-            eprintln!("Blockchain is already up to date (height: {})", current_height);
+            eprintln!(
+                "Blockchain is already up to date (height: {})",
+                current_height
+            );
             return Ok(());
         }
 
-        eprintln!("Syncing from {} to {} using peer {}", current_height + 1, max_height, best_peer);
+        eprintln!(
+            "Syncing from {} to {} using peer {}",
+            current_height + 1,
+            max_height,
+            best_peer
+        );
 
         // Download and add missing blocks
         for index in (current_height + 1)..=max_height {
             let url = format!("{}/block/{}", best_peer.trim_end_matches('/'), index);
-            let resp = client.get(&url).send().await
-                .with_context(|| format!("Failed to fetch block {} from {}", index, best_peer))?;
+            let resp =
+                client.get(&url).send().await.with_context(|| {
+                    format!("Failed to fetch block {} from {}", index, best_peer)
+                })?;
 
-            let block: Block = resp.json().await
+            let block: Block = resp
+                .json()
+                .await
                 .with_context(|| format!("Failed to parse block {} from {}", index, best_peer))?;
 
             // Validate and add the block
@@ -158,12 +183,19 @@ impl Blockchain {
                 self.chain.push(block);
                 eprintln!("Added block {}", index);
             } else {
-                return Err(anyhow!("Invalid block {} received from {}", index, best_peer));
+                return Err(anyhow!(
+                    "Invalid block {} received from {}",
+                    index,
+                    best_peer
+                ));
             }
         }
 
-    self.save_to_file(crate::config::get_blockchain_path())?;
-        eprintln!("Sync complete. New height: {}", self.chain.last().map(|b| b.index).unwrap_or(0));
+        self.save_to_file(crate::config::get_blockchain_path())?;
+        eprintln!(
+            "Sync complete. New height: {}",
+            self.chain.last().map(|b| b.index).unwrap_or(0)
+        );
 
         Ok(())
     }
@@ -254,8 +286,8 @@ impl Blockchain {
                     // Prefetch hints where available
                     #[cfg(target_arch = "x86_64")]
                     {
-                        use core::arch::x86_64::_mm_prefetch;
                         use core::arch::x86_64::_MM_HINT_T0;
+                        use core::arch::x86_64::_mm_prefetch;
                         let p = sp_ptr.add(idx1) as *const i8;
                         _mm_prefetch(p, _MM_HINT_T0);
                     }
@@ -285,7 +317,8 @@ impl Blockchain {
 
                     // Additional entropy from block data occasionally
                     if iteration & 127 == 0 {
-                        let block_byte = *block_bytes.get(iteration % block_bytes.len()).unwrap_or(&0);
+                        let block_byte =
+                            *block_bytes.get(iteration % block_bytes.len()).unwrap_or(&0);
                         a ^= block_byte as u64;
                         b ^= (block_byte as u64).rotate_left(8);
                         c ^= (block_byte as u64).rotate_left(16);
@@ -329,7 +362,12 @@ impl Blockchain {
 
             let calc = Self::calculate_hash(cur);
             if calc != cur.hash {
-                anyhow::bail!("invalid hash at index {}: {} != {}", cur.index, calc, cur.hash);
+                anyhow::bail!(
+                    "invalid hash at index {}: {} != {}",
+                    cur.index,
+                    calc,
+                    cur.hash
+                );
             }
         }
         Ok(())
@@ -369,11 +407,17 @@ impl Blockchain {
         if self.chain.is_empty() {
             // Genesis validation
             if block.index != 0 {
-                eprintln!("Genesis block validation failed: Index must be 0, got {}", block.index);
+                eprintln!(
+                    "Genesis block validation failed: Index must be 0, got {}",
+                    block.index
+                );
                 return false;
             }
             if !block.prev_hash.is_empty() {
-                eprintln!("Genesis block validation failed: PrevHash must be empty, got {}", block.prev_hash);
+                eprintln!(
+                    "Genesis block validation failed: PrevHash must be empty, got {}",
+                    block.prev_hash
+                );
                 return false;
             }
             if Self::calculate_hash(block) != block.hash {
@@ -429,23 +473,76 @@ impl Blockchain {
                 continue;
             }
             if !verify_transaction_signature(tx, &tx.pub_key) {
-                eprintln!("Block {} validation failed: Invalid transaction signature for tx from {} to {}", block.index, tx.from, tx.to);
+                eprintln!(
+                    "Block {} validation failed: Invalid transaction signature for tx from {} to {}",
+                    block.index, tx.from, tx.to
+                );
                 return false;
             }
         }
 
+        // Check for overspending: compute current balances from chain and
+        // ensure applying this block's transactions in order does not make
+        // any wallet go negative.
+        let mut balances: HashMap<String, i64> = HashMap::new();
+        for b in &self.chain {
+            for t in &b.transactions {
+                let to = t.to.trim().to_lowercase();
+                if t.from != "coinbase" {
+                    let from = t.from.trim().to_lowercase();
+                    *balances.entry(from).or_insert(0) -= t.amount;
+                }
+                *balances.entry(to).or_insert(0) += t.amount;
+            }
+        }
+
+        for tx in &block.transactions {
+            if tx.amount <= 0 {
+                eprintln!("Block {} validation failed: Non-positive tx amount", block.index);
+                return false;
+            }
+            if tx.from == "coinbase" {
+                // credit recipient
+                let to = tx.to.trim().to_lowercase();
+                *balances.entry(to).or_insert(0) += tx.amount;
+                continue;
+            }
+            let from = tx.from.trim().to_lowercase();
+            let to = tx.to.trim().to_lowercase();
+            let from_bal = balances.get(&from).cloned().unwrap_or(0);
+            if from_bal < tx.amount {
+                eprintln!(
+                    "Block {} validation failed: Insufficient funds for {} (need {}, have {})",
+                    block.index, from, tx.amount, from_bal
+                );
+                return false;
+            }
+            *balances.entry(from).or_insert(0) -= tx.amount;
+            *balances.entry(to).or_insert(0) += tx.amount;
+        }
         true
     }
 
-    /// Validate a block but return a textual error describing the first failure, if any.
-    pub fn validate_block_verbose(&self, block: &Block, difficulty: u32, skip_pow: bool) -> Option<String> {
+    /// i watch hentai but dont tell my mom ok? 🥺🥺🥺
+    pub fn validate_block_verbose(
+        &self,
+        block: &Block,
+        difficulty: u32,
+        skip_pow: bool,
+    ) -> Option<String> {
         if self.chain.is_empty() {
             // Genesis validation
             if block.index != 0 {
-                return Some(format!("Genesis block validation failed: Index must be 0, got {}", block.index));
+                return Some(format!(
+                    "Genesis block validation failed: Index must be 0, got {}",
+                    block.index
+                ));
             }
             if !block.prev_hash.is_empty() {
-                return Some(format!("Genesis block validation failed: PrevHash must be empty, got {}", block.prev_hash));
+                return Some(format!(
+                    "Genesis block validation failed: PrevHash must be empty, got {}",
+                    block.prev_hash
+                ));
             }
             if Self::calculate_hash(block) != block.hash {
                 return Some("Genesis block validation failed: Hash mismatch".to_string());
@@ -455,13 +552,20 @@ impl Blockchain {
 
         let last = &self.chain[self.chain.len() - 1];
         if block.prev_hash != last.hash {
-            return Some(format!("PrevHash mismatch: expected {} got {}", last.hash, block.prev_hash));
+            return Some(format!(
+                "PrevHash mismatch: expected {} got {}",
+                last.hash, block.prev_hash
+            ));
         }
         if Self::calculate_hash(block) != block.hash {
             return Some("Hash mismatch".to_string());
         }
         if block.index != last.index + 1 {
-            return Some(format!("Index mismatch: expected {} got {}", last.index + 1, block.index));
+            return Some(format!(
+                "Index mismatch: expected {} got {}",
+                last.index + 1,
+                block.index
+            ));
         }
 
         if !skip_pow {
@@ -495,8 +599,48 @@ impl Blockchain {
                 continue;
             }
             if !verify_transaction_signature(tx, &tx.pub_key) {
-                return Some(format!("Invalid transaction signature for tx from {} to {}", tx.from, tx.to));
+                return Some(format!(
+                    "Invalid transaction signature for tx from {} to {}",
+                    tx.from, tx.to
+                ));
             }
+        }
+
+        // Check for overspending: compute current balances from chain and
+        // ensure applying this block's transactions in order does not make
+        // any wallet go negative. Return a descriptive error when it fails.
+        let mut balances: HashMap<String, i64> = HashMap::new();
+        for b in &self.chain {
+            for t in &b.transactions {
+                let to = t.to.trim().to_lowercase();
+                if t.from != "coinbase" {
+                    let from = t.from.trim().to_lowercase();
+                    *balances.entry(from).or_insert(0) -= t.amount;
+                }
+                *balances.entry(to).or_insert(0) += t.amount;
+            }
+        }
+
+        for tx in &block.transactions {
+            if tx.amount <= 0 {
+                return Some("Non-positive transaction amount".to_string());
+            }
+            if tx.from == "coinbase" {
+                let to = tx.to.trim().to_lowercase();
+                *balances.entry(to).or_insert(0) += tx.amount;
+                continue;
+            }
+            let from = tx.from.trim().to_lowercase();
+            let to = tx.to.trim().to_lowercase();
+            let from_bal = balances.get(&from).cloned().unwrap_or(0);
+            if from_bal < tx.amount {
+                return Some(format!(
+                    "Insufficient funds for {}: need {}, have {}",
+                    from, tx.amount, from_bal
+                ));
+            }
+            *balances.entry(from).or_insert(0) -= tx.amount;
+            *balances.entry(to).or_insert(0) += tx.amount;
         }
 
         None
@@ -543,7 +687,8 @@ impl Blockchain {
         }
 
         // Verify integrity before returning
-        bc.verify_chain().context("loaded blockchain failed integrity check")?;
+        bc.verify_chain()
+            .context("loaded blockchain failed integrity check")?;
 
         Ok(bc)
     }
@@ -611,7 +756,9 @@ impl Blockchain {
 
             // Periodically flush into the shared atomic counter if provided.
             if let Some(at) = attempts_atomic {
-                if flush_chunk >= flush_threshold || last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
+                if flush_chunk >= flush_threshold
+                    || last_flush.elapsed() >= Duration::from_millis(flush_interval_ms)
+                {
                     at.fetch_add(flush_chunk, std::sync::atomic::Ordering::Relaxed);
                     // reset chunk after flushing
                     flush_chunk = 0;
@@ -684,11 +831,16 @@ struct BlockForHash {
 // Transaction signing functions
 pub fn sign_transaction(tx: &mut Transaction, priv_key_hex: &str) -> Result<()> {
     let priv_key_bytes = hex::decode(priv_key_hex)?;
-    let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &priv_key_bytes, &ring::rand::SystemRandom::new())
-        .map_err(|_| anyhow!("Invalid private key"))?;
+    let key_pair = EcdsaKeyPair::from_pkcs8(
+        &ECDSA_P256_SHA256_FIXED_SIGNING,
+        &priv_key_bytes,
+        &ring::rand::SystemRandom::new(),
+    )
+    .map_err(|_| anyhow!("Invalid private key"))?;
 
     let message = format!("{}|{}|{}", tx.from, tx.to, tx.amount);
-    let signature = key_pair.sign(&ring::rand::SystemRandom::new(), message.as_bytes())
+    let signature = key_pair
+        .sign(&ring::rand::SystemRandom::new(), message.as_bytes())
         .map_err(|_| anyhow!("Failed to sign transaction"))?;
 
     tx.signature = hex::encode(signature.as_ref());
@@ -697,7 +849,11 @@ pub fn sign_transaction(tx: &mut Transaction, priv_key_hex: &str) -> Result<()> 
 
 pub fn verify_transaction_signature(tx: &Transaction, pub_key_hex: &str) -> bool {
     // If the provided pub_key_hex is empty (older format), fall back to using tx.from
-    let key_hex = if pub_key_hex.is_empty() { &tx.from } else { pub_key_hex };
+    let key_hex = if pub_key_hex.is_empty() {
+        &tx.from
+    } else {
+        pub_key_hex
+    };
 
     let pub_key_bytes = match hex::decode(key_hex) {
         Ok(bytes) => bytes,

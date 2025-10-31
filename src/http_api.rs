@@ -1,13 +1,13 @@
 use axum::{
+    Json, Router,
     extract::{Query, State},
     http::StatusCode,
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tokio::net::TcpStream;
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -46,7 +46,9 @@ async fn connect_to_daemon(daemon_addr: &str, command: &str) -> anyhow::Result<S
     reader.read_line(&mut greeting).await?;
 
     // Send command
-    writer.write_all(format!("{}\n", command).as_bytes()).await?;
+    writer
+        .write_all(format!("{}\n", command).as_bytes())
+        .await?;
 
     // Read response
     let mut response = String::new();
@@ -89,7 +91,10 @@ pub async fn get_stats(State(state): State<AppState>) -> Result<Json<Value>, Sta
     // Get network hashrate
     if let Ok(hashrate_str) = connect_to_daemon(&state.daemon_addr, "getnetworkhashrate").await {
         if let Ok(hashrate_obj) = serde_json::from_str::<Value>(&hashrate_str) {
-            if let Some(hr) = hashrate_obj.get("network_hashrate").and_then(|v| v.as_f64()) {
+            if let Some(hr) = hashrate_obj
+                .get("network_hashrate")
+                .and_then(|v| v.as_f64())
+            {
                 response["network_hashrate"] = json!(hr);
             }
         }
@@ -104,12 +109,10 @@ pub async fn get_wallet_hashrate(
 ) -> Result<Json<WalletHashrateResponse>, StatusCode> {
     let command = format!("getwallethashrate {}", query.addr);
     match connect_to_daemon(&state.daemon_addr, &command).await {
-        Ok(response_str) => {
-            match serde_json::from_str::<WalletHashrateResponse>(&response_str) {
-                Ok(resp) => Ok(Json(resp)),
-                Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-            }
-        }
+        Ok(response_str) => match serde_json::from_str::<WalletHashrateResponse>(&response_str) {
+            Ok(resp) => Ok(Json(resp)),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        },
         Err(_) => Err(StatusCode::SERVICE_UNAVAILABLE),
     }
 }
@@ -142,12 +145,10 @@ pub async fn get_wallet_balance(
 
 pub async fn get_chain(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
     match connect_to_daemon(&state.daemon_addr, "getchain").await {
-        Ok(chain_str) => {
-            match serde_json::from_str::<Value>(&chain_str) {
-                Ok(chain_obj) => Ok(Json(chain_obj)),
-                Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-            }
-        }
+        Ok(chain_str) => match serde_json::from_str::<Value>(&chain_str) {
+            Ok(chain_obj) => Ok(Json(chain_obj)),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        },
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }

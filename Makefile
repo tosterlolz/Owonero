@@ -1,7 +1,11 @@
-.PHONY: all clean install build build-win
+.PHONY: all clean install build build-win check
 
 # Główne zadanie — zbuduj i zainstaluj
 all: build build-win install
+
+check:
+	cargo fmt -- --check
+	@echo "✅ All tasks complete."
 
 # 🔧 Build natywny
 build:

@@ -1,12 +1,12 @@
-use crate::blockchain::{Blockchain, Block};
+use crate::blockchain::{Block, Blockchain};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::net::TcpStream;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
-use std::collections::VecDeque;
+use tokio::time::{Duration, sleep};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinerStats {
@@ -38,7 +38,12 @@ pub async fn start_mining(
 
     // Prefer sending logs into the TUI when available. Fall back to stdout if not.
     if let Some(ref tx) = log_tx {
-        let _ = tx.send(format!("Mining for wallet {} to node {}", wallet.address, node_addr)).await;
+        let _ = tx
+            .send(format!(
+                "Mining for wallet {} to node {}",
+                wallet.address, node_addr
+            ))
+            .await;
     }
 
     // Try to connect to node and fetch the authoritative chain. If the node
@@ -53,7 +58,9 @@ pub async fn start_mining(
             // Try to read greeting (ignore errors)
             let _ = reader.read_line(&mut greeting).await;
             if let Some(ref tx) = log_tx {
-                let _ = tx.send(format!("Connected to node: {}", greeting.trim())).await;
+                let _ = tx
+                    .send(format!("Connected to node: {}", greeting.trim()))
+                    .await;
             }
 
             // Request chain from node
@@ -64,28 +71,47 @@ pub async fn start_mining(
                         bc
                     } else {
                         if let Some(ref tx) = log_tx {
-                            let _ = tx.send("Failed to parse chain from node; using local chain".to_string()).await;
+                            let _ = tx
+                                .send(
+                                    "Failed to parse chain from node; using local chain"
+                                        .to_string(),
+                                )
+                                .await;
                         }
-                        Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
+                        Blockchain::load_from_file("blockchain.json")
+                            .unwrap_or_else(|_| Blockchain::new())
                     }
                 } else {
                     if let Some(ref tx) = log_tx {
-                        let _ = tx.send("Failed to read chain from node; using local chain".to_string()).await;
+                        let _ = tx
+                            .send("Failed to read chain from node; using local chain".to_string())
+                            .await;
                     }
-                    Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
+                    Blockchain::load_from_file("blockchain.json")
+                        .unwrap_or_else(|_| Blockchain::new())
                 }
             } else {
                 if let Some(ref tx) = log_tx {
-                    let _ = tx.send("Failed to request chain from node; using local chain".to_string()).await;
+                    let _ = tx
+                        .send("Failed to request chain from node; using local chain".to_string())
+                        .await;
                 }
                 Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
             }
         }
         Err(_) => {
             if let Some(ref tx) = log_tx {
-                let _ = tx.send(format!("Could not connect to node {} - using local chain", node_addr)).await;
+                let _ = tx
+                    .send(format!(
+                        "Could not connect to node {} - using local chain",
+                        node_addr
+                    ))
+                    .await;
             } else {
-                eprintln!("Could not connect to node {} - using local chain", node_addr);
+                eprintln!(
+                    "Could not connect to node {} - using local chain",
+                    node_addr
+                );
             }
             Blockchain::load_from_file("blockchain.json").unwrap_or_else(|_| Blockchain::new())
         }
@@ -94,7 +120,8 @@ pub async fn start_mining(
     let blockchain = Arc::new(Mutex::new(blockchain));
     let latest_block: Arc<Mutex<Option<Block>>> = Arc::new(Mutex::new(None));
     // Shared mempool (kept in sync with node via poller)
-    let mempool_shared: Arc<Mutex<Vec<crate::blockchain::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
+    let mempool_shared: Arc<Mutex<Vec<crate::blockchain::Transaction>>> =
+        Arc::new(Mutex::new(Vec::new()));
     let attempts = Arc::new(AtomicU64::new(0));
     let mined = Arc::new(AtomicU64::new(0));
 
@@ -144,10 +171,14 @@ pub async fn start_mining(
             // Check local latest template before submitting. If our local latest doesn't
             // match the block's prev_hash, the block is stale — notify workers and skip submit.
             {
-                let local_latest_opt = latest_block_submitter.lock().unwrap().as_ref().map(|b| b.hash.clone());
+                let local_latest_opt = latest_block_submitter
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|b| b.hash.clone());
                 if let Some(local_latest) = local_latest_opt {
                     if local_latest != block.prev_hash {
-                                chain_version_submitter.fetch_add(1, Ordering::Relaxed);
+                        chain_version_submitter.fetch_add(1, Ordering::Relaxed);
                         continue;
                     }
                 }
@@ -169,20 +200,29 @@ pub async fn start_mining(
                 // we can verify coinbase/tx contents in case the node later
                 // shows empty transactions.
                 if let Some(ref tx) = log_tx_clone1 {
-                    let _ = tx.send(format!("[miner] submitting block JSON: {}", block_json)).await;
+                    let _ = tx
+                        .send(format!("[miner] submitting block JSON: {}", block_json))
+                        .await;
                 } else {
                     eprintln!("[miner] submitting block JSON: {}", block_json);
                 }
-                writer.write_all(format!("{}\n", block_json).as_bytes()).await?;
+                writer
+                    .write_all(format!("{}\n", block_json).as_bytes())
+                    .await?;
 
                 let mut response = String::new();
                 reader.read_line(&mut response).await?;
                 let response = response.trim();
 
-                    if response == "ok" {
+                if response == "ok" {
                     accepted_clone1.fetch_add(1, Ordering::Relaxed);
                     if let Some(ref tx) = log_tx_clone1 {
-                        let _ = tx.send(format!("Block accepted! Index={} Hash={}", block.index, block.hash)).await;
+                        let _ = tx
+                            .send(format!(
+                                "Block accepted! Index={} Hash={}",
+                                block.index, block.hash
+                            ))
+                            .await;
                     }
                     {
                         let mut latest_block_guard = latest_block_submitter.lock().unwrap();
@@ -194,18 +234,29 @@ pub async fn start_mining(
                         let mut mp = mempool_for_submitter.lock().unwrap();
                         mp.retain(|t| {
                             // keep txs that are NOT in the block (match by signature)
-                            !block.transactions.iter().any(|bt| bt.signature == t.signature)
+                            !block
+                                .transactions
+                                .iter()
+                                .any(|bt| bt.signature == t.signature)
                         });
                     }
                 } else {
                     rejected_clone1.fetch_add(1, Ordering::Relaxed);
                     // If node rejected due to PrevHash mismatch, log local view to help debugging
-                    if response.contains("PrevHash") || response.contains("prev_hash") || response.contains("PrevHash mismatch") {
-                        let local_latest = latest_block_submitter.lock().unwrap().as_ref().map(|b| b.hash.clone()).unwrap_or_else(|| "<none>".to_string());
+                    if response.contains("PrevHash")
+                        || response.contains("prev_hash")
+                        || response.contains("PrevHash mismatch")
+                    {
+                        let local_latest = latest_block_submitter
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .map(|b| b.hash.clone())
+                            .unwrap_or_else(|| "<none>".to_string());
                         let cur_ver = chain_version_submitter.load(Ordering::Relaxed);
-                            if let Some(ref lt) = log_tx_clone1 {
-                                let _ = lt.send(format!("[miner] submitter: node rejected block: {} | submitted.prev_hash={} | local_latest={} | chain_version={}", response, block.prev_hash, local_latest, cur_ver)).await;
-                            }
+                        if let Some(ref lt) = log_tx_clone1 {
+                            let _ = lt.send(format!("[miner] submitter: node rejected block: {} | submitted.prev_hash={} | local_latest={} | chain_version={}", response, block.prev_hash, local_latest, cur_ver)).await;
+                        }
                     }
                     if let Some(ref tx) = log_tx_clone1 {
                         let _ = tx.send(format!("Node rejected block: {}", response)).await;
@@ -216,7 +267,9 @@ pub async fn start_mining(
             } else {
                 rejected_clone1.fetch_add(1, Ordering::Relaxed);
                 if let Some(ref tx) = log_tx_clone1 {
-                    let _ = tx.send("Failed to connect to node for block submission".to_string()).await;
+                    let _ = tx
+                        .send("Failed to connect to node for block submission".to_string())
+                        .await;
                 } else {
                     eprintln!("Failed to connect to node for block submission");
                 }
@@ -250,7 +303,9 @@ pub async fn start_mining(
                     "block": block
                 });
                 let share_json = serde_json::to_string(&share)?;
-                writer.write_all(format!("{}\n", share_json).as_bytes()).await?;
+                writer
+                    .write_all(format!("{}\n", share_json).as_bytes())
+                    .await?;
 
                 let mut response = String::new();
                 reader.read_line(&mut response).await?;
@@ -259,7 +314,9 @@ pub async fn start_mining(
                 if response == "ok" {
                     accepted_clone2.fetch_add(1, Ordering::Relaxed);
                     if let Some(ref tx) = log_tx_clone2 {
-                        let _ = tx.send(format!("Share accepted: {} attempts", attempts_val)).await;
+                        let _ = tx
+                            .send(format!("Share accepted: {} attempts", attempts_val))
+                            .await;
                     }
                 } else {
                     rejected_clone2.fetch_add(1, Ordering::Relaxed);
@@ -272,7 +329,9 @@ pub async fn start_mining(
             } else {
                 rejected_clone2.fetch_add(1, Ordering::Relaxed);
                 if let Some(ref tx) = log_tx_clone2 {
-                    let _ = tx.send("Failed to connect to node for share submission".to_string()).await;
+                    let _ = tx
+                        .send("Failed to connect to node for share submission".to_string())
+                        .await;
                 } else {
                     eprintln!("Failed to connect to node for share submission");
                 }
@@ -301,7 +360,10 @@ pub async fn start_mining(
                     if w.write_all(b"getmempool\n").await.is_ok() {
                         let mut memline = String::new();
                         if r.read_line(&mut memline).await.is_ok() {
-                            if let Ok(vec_tx) = serde_json::from_str::<Vec<crate::blockchain::Transaction>>(memline.trim()) {
+                            if let Ok(vec_tx) = serde_json::from_str::<
+                                Vec<crate::blockchain::Transaction>,
+                            >(memline.trim())
+                            {
                                 let mut mp = mempool_clone.lock().unwrap();
                                 *mp = vec_tx;
                             }
@@ -381,9 +443,21 @@ pub async fn start_mining(
                 let sum_hour: u64 = history_clone.iter().rev().take(samples_hour).sum();
                 let sum_day: u64 = history_clone.iter().sum();
 
-                let avg_min = if samples_min > 0 { sum_min as f64 / samples_min as f64 } else { 0.0 };
-                let avg_hour = if samples_hour > 0 { sum_hour as f64 / samples_hour as f64 } else { 0.0 };
-                let avg_day = if history_clone.len() > 0 { sum_day as f64 / history_clone.len() as f64 } else { 0.0 };
+                let avg_min = if samples_min > 0 {
+                    sum_min as f64 / samples_min as f64
+                } else {
+                    0.0
+                };
+                let avg_hour = if samples_hour > 0 {
+                    sum_hour as f64 / samples_hour as f64
+                } else {
+                    0.0
+                };
+                let avg_day = if history_clone.len() > 0 {
+                    sum_day as f64 / history_clone.len() as f64
+                } else {
+                    0.0
+                };
 
                 let stats = MinerStats {
                     total_hps: h,
@@ -420,7 +494,9 @@ pub async fn start_mining(
                     let mut reader = BufReader::new(reader);
                     let _ = reader.read_line(&mut _tmp).await;
                     let _ = writer.write_all(b"updatestats\n").await;
-                    let _ = writer.write_all(format!("{}\n", report_str).as_bytes()).await;
+                    let _ = writer
+                        .write_all(format!("{}\n", report_str).as_bytes())
+                        .await;
                 }
 
                 // Emit occasional debug log when attempts are zero to help diagnose
@@ -445,20 +521,20 @@ pub async fn start_mining(
     // Mining workers as dedicated OS threads
     let mut worker_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
     for _id in 0..threads {
-    let wallet_address = wallet.address.clone();
-    let wallet_pub_key = wallet.pub_key.clone();
-    let wallet_priv_key = wallet.priv_key.clone();
-    let blockchain = blockchain.clone();
-    let mempool_shared = mempool_shared.clone();
-    let attempts = attempts.clone();
-    let block_sync_tx = block_sync_tx.clone();
-    let shutdown_flag = shutdown_flag.clone();
-    let latest_block_worker = latest_block.clone();
-    let log_tx_worker = log_tx.clone();
-    let chain_version_worker = chain_version.clone();
-    let wallet_pub_key = wallet_pub_key.clone();
-    let wallet_priv_key = wallet_priv_key.clone();
-    let handle = std::thread::spawn(move || {
+        let wallet_address = wallet.address.clone();
+        let wallet_pub_key = wallet.pub_key.clone();
+        let wallet_priv_key = wallet.priv_key.clone();
+        let blockchain = blockchain.clone();
+        let mempool_shared = mempool_shared.clone();
+        let attempts = attempts.clone();
+        let block_sync_tx = block_sync_tx.clone();
+        let shutdown_flag = shutdown_flag.clone();
+        let latest_block_worker = latest_block.clone();
+        let log_tx_worker = log_tx.clone();
+        let chain_version_worker = chain_version.clone();
+        let wallet_pub_key = wallet_pub_key.clone();
+        let wallet_priv_key = wallet_priv_key.clone();
+        let handle = std::thread::spawn(move || {
             loop {
                 if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
@@ -484,7 +560,11 @@ pub async fn start_mining(
                 let diff = {
                     let bc = blockchain.lock().unwrap();
                     let dyn_diff = bc.get_dynamic_difficulty();
-                    if pool { dyn_diff.saturating_sub(2).max(1) } else { dyn_diff }
+                    if pool {
+                        dyn_diff.saturating_sub(2).max(1)
+                    } else {
+                        dyn_diff
+                    }
                 };
 
                 // Get mempool transactions
@@ -497,10 +577,12 @@ pub async fn start_mining(
                 // mined blocks actually credit the miner. Reward amount can be
                 // configured with OWONERO_BLOCK_REWARD (default: 1).
                 let mut mempool_with_coinbase: Vec<crate::blockchain::Transaction> = Vec::new();
+                // Block reward is specified in OWE (decimal). Convert to internal units (milli-OWE)
                 let reward_amount: i64 = std::env::var("OWONERO_BLOCK_REWARD")
                     .ok()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(1);
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .map(|v| (v * 1000.0).round() as i64)
+                    .unwrap_or(1000); // default: 1 OWE -> 1000 internal units
                 let mut coinbase_tx = crate::blockchain::Transaction {
                     from: "coinbase".to_string(),
                     pub_key: wallet_pub_key.clone(),
@@ -521,8 +603,8 @@ pub async fn start_mining(
                     mempool_with_coinbase,
                     diff,
                     &mut local_attempts,
-                    Some(&*attempts),  // Pass atomic for shared updates
-                    Some(&*chain_version_worker),  // Abort on chain version change
+                    Some(&*attempts),             // Pass atomic for shared updates
+                    Some(&*chain_version_worker), // Abort on chain version change
                 );
 
                 // Update attempts
@@ -538,7 +620,10 @@ pub async fn start_mining(
                     // Mining aborted (likely due to chain_version change). Log for diagnostics.
                     let cur_ver = chain_version_worker.load(Ordering::Relaxed);
                     if let Some(ref lt) = log_tx_worker {
-                        let _ = lt.try_send(format!("[miner] worker abort: chain_version={} prev_hash_template={}", cur_ver, prev_block.hash));
+                        let _ = lt.try_send(format!(
+                            "[miner] worker abort: chain_version={} prev_hash_template={}",
+                            cur_ver, prev_block.hash
+                        ));
                     }
                 }
             }
@@ -555,7 +640,7 @@ pub async fn start_mining(
         let latest_block_poller = latest_block.clone();
         let chain_version_poller = chain_version.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(500));  // More frequent updates
+            let mut interval = tokio::time::interval(Duration::from_millis(500)); // More frequent updates
             loop {
                 interval.tick().await;
                 if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
@@ -586,7 +671,9 @@ pub async fn start_mining(
 
     // Wait for completion or cancellation
     if blocks_to_mine > 0 {
-        while mined.load(Ordering::Relaxed) < blocks_to_mine && !shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        while mined.load(Ordering::Relaxed) < blocks_to_mine
+            && !shutdown_flag.load(std::sync::atomic::Ordering::Relaxed)
+        {
             sleep(Duration::from_millis(200)).await;
         }
     } else {

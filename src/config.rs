@@ -1,7 +1,7 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{PathBuf};
-use anyhow::{Result, Context};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -115,7 +115,6 @@ pub fn load_config() -> Result<Config> {
     }
 }
 
-
 pub fn save_config(config: &Config) -> Result<()> {
     let path = get_config_path();
     let data = serde_json::to_string_pretty(config).context("serializing config")?;
@@ -141,7 +140,8 @@ mod tests {
         // save to temporary directory
         fs::write(&temp_file, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
 
-        let loaded: Config = serde_json::from_str(&fs::read_to_string(&temp_file).unwrap()).unwrap();
+        let loaded: Config =
+            serde_json::from_str(&fs::read_to_string(&temp_file).unwrap()).unwrap();
         assert_eq!(loaded.node_address, cfg.node_address);
         assert_eq!(loaded.daemon_port, cfg.daemon_port);
     }

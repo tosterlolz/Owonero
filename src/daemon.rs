@@ -1,9 +1,9 @@
-use tokio::net::{TcpListener, TcpStream};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use crate::blockchain::Blockchain;
 use anyhow::anyhow;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 
 pub struct PeerManager {
     peers: Mutex<Vec<String>>,
@@ -28,14 +28,21 @@ impl PeerManager {
     }
 }
 
-pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<PeerManager>, pool: bool, standalone: bool) -> anyhow::Result<()> {
+pub async fn run_daemon(
+    port: u16,
+    blockchain: Arc<Mutex<Blockchain>>,
+    pm: Arc<PeerManager>,
+    pool: bool,
+    standalone: bool,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     println!("Daemon listening on :{}", port);
 
     let shares: Arc<Mutex<HashMap<String, i64>>> = Arc::new(Mutex::new(HashMap::new()));
     let mempool: Arc<Mutex<Vec<crate::blockchain::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
     // Track last-reported hashrate per wallet: (hashrate, last_update_unix)
-    let wallet_hashrates: Arc<Mutex<HashMap<String, (f64, u64)>>> = Arc::new(Mutex::new(HashMap::new()));
+    let wallet_hashrates: Arc<Mutex<HashMap<String, (f64, u64)>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     // Spawn a background cleaner that removes stale wallet hashrate entries
     // older than 10 seconds to keep the in-memory map small.
     {
@@ -47,8 +54,15 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
                 let now = chrono::Utc::now().timestamp() as u64;
                 let mut map = wallet_hashrates_clean.lock().unwrap();
                 // Remove entries older than 10 seconds
-                let stale: Vec<String> = map.iter()
-                    .filter_map(|(k, (_hr, ts))| if now.saturating_sub(*ts) > 10 { Some(k.clone()) } else { None })
+                let stale: Vec<String> = map
+                    .iter()
+                    .filter_map(|(k, (_hr, ts))| {
+                        if now.saturating_sub(*ts) > 10 {
+                            Some(k.clone())
+                        } else {
+                            None
+                        }
+                    })
                     .collect();
                 for k in stale {
                     map.remove(&k);
@@ -68,7 +82,8 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
         let blockchain_sync = blockchain.clone();
         let pm_sync = pm.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(sync_interval_secs));
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(sync_interval_secs));
             loop {
                 interval.tick().await;
                 let peers = pm_sync.get_peers();
@@ -93,22 +108,34 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
                             let (r, mut w) = stream.split();
                             let mut reader = BufReader::new(r);
                             if let Err(e) = w.write_all(b"getlatest\n").await {
-                                eprintln!("[sync] Failed to request latest block from {}: {}", peer, e);
+                                eprintln!(
+                                    "[sync] Failed to request latest block from {}: {}",
+                                    peer, e
+                                );
                                 continue;
                             }
                             let mut line = String::new();
                             if let Ok(_) = reader.read_line(&mut line).await {
-                                if let Ok(peer_latest) = serde_json::from_str::<crate::blockchain::Block>(line.trim()) {
+                                if let Ok(peer_latest) =
+                                    serde_json::from_str::<crate::blockchain::Block>(line.trim())
+                                {
                                     if let Some(local_hash) = &local_latest_hash {
                                         if peer_latest.hash != *local_hash {
                                             // Request full chain from peer
                                             if let Err(e) = w.write_all(b"getchain\n").await {
-                                                eprintln!("[sync] Failed to request chain from {}: {}", peer, e);
+                                                eprintln!(
+                                                    "[sync] Failed to request chain from {}: {}",
+                                                    peer, e
+                                                );
                                                 continue;
                                             }
                                             let mut chain_data = String::new();
                                             if let Ok(_) = reader.read_line(&mut chain_data).await {
-                                                if let Ok(peer_chain) = serde_json::from_str::<crate::blockchain::Blockchain>(chain_data.trim()) {
+                                                if let Ok(peer_chain) = serde_json::from_str::<
+                                                    crate::blockchain::Blockchain,
+                                                >(
+                                                    chain_data.trim()
+                                                ) {
                                                     let peer_len = peer_chain.chain.len();
                                                     if peer_len > best_chain_len {
                                                         best_chain_len = peer_len;
@@ -116,10 +143,16 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
                                                         best_chain = Some(peer_chain);
                                                     }
                                                 } else {
-                                                    eprintln!("[sync] Failed to parse chain from {}", peer);
+                                                    eprintln!(
+                                                        "[sync] Failed to parse chain from {}",
+                                                        peer
+                                                    );
                                                 }
                                             } else {
-                                                eprintln!("[sync] Failed to read chain data from {}", peer);
+                                                eprintln!(
+                                                    "[sync] Failed to read chain data from {}",
+                                                    peer
+                                                );
                                             }
                                         }
                                     }
@@ -147,7 +180,10 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
                         }
                         let new_height = bc.chain.len();
                         let new_hash = bc.chain.last().map(|b| b.hash.clone()).unwrap_or_default();
-                        eprintln!("[sync] Synced blockchain from peer {}: height {}→{}, hash {}→{}", peer, old_height, new_height, old_hash, new_hash);
+                        eprintln!(
+                            "[sync] Synced blockchain from peer {}: height {}→{}, hash {}→{}",
+                            peer, old_height, new_height, old_hash, new_hash
+                        );
                     }
                 }
             }
@@ -173,10 +209,24 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
         let mempool = mempool.clone();
         let wallet_hashrates = wallet_hashrates.clone();
         let pool = pool;
-        let pm = if standalone { Arc::new(PeerManager::new()) } else { pm.clone() };
+        let pm = if standalone {
+            Arc::new(PeerManager::new())
+        } else {
+            pm.clone()
+        };
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(socket, blockchain, pm, shares, mempool, wallet_hashrates, pool).await {
+            if let Err(e) = handle_connection(
+                socket,
+                blockchain,
+                pm,
+                shares,
+                mempool,
+                wallet_hashrates,
+                pool,
+            )
+            .await
+            {
                 eprintln!("Connection error: {}", e);
             }
         });
@@ -201,7 +251,9 @@ async fn handle_connection(
         let bc = blockchain.lock().unwrap();
         bc.chain.last().map(|b| b.index).unwrap_or(0)
     };
-    writer.write_all(format!("owonero-daemon height={}\n", height).as_bytes()).await?;
+    writer
+        .write_all(format!("owonero-daemon height={}\n", height).as_bytes())
+        .await?;
 
     let mut line = String::new();
     while reader.read_line(&mut line).await? > 0 {
@@ -213,6 +265,39 @@ async fn handle_connection(
                     serde_json::to_string(&*bc)?
                 };
                 writer.write_all(format!("{}\n", data).as_bytes()).await?;
+            }
+            cmd if cmd.starts_with("getblock") => {
+                // Support two forms:
+                //  - "getblock <index>" on the same line
+                //  - "getblock" followed by a line containing the index
+                let mut parts = cmd.split_whitespace();
+                let _ = parts.next();
+                let idx_str = parts.next().map(|s| s.to_string());
+                let idx = if let Some(s) = idx_str {
+                    s.parse::<usize>().ok()
+                } else {
+                    line.clear();
+                    reader.read_line(&mut line).await?;
+                    line.trim().parse::<usize>().ok()
+                };
+
+                if let Some(i) = idx {
+                    let resp = {
+                        let bc = blockchain.lock().unwrap();
+                        if i < bc.chain.len() {
+                            serde_json::to_string(&bc.chain[i]).ok()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(bdata) = resp {
+                        writer.write_all(format!("{}\n", bdata).as_bytes()).await?;
+                    } else {
+                        writer.write_all(b"error: block not found\n").await?;
+                    }
+                } else {
+                    writer.write_all(b"error: invalid index\n").await?;
+                }
             }
             "getheight" => {
                 let height = {
@@ -238,8 +323,12 @@ async fn handle_connection(
                     // Check if block index already exists
                     if let Some(last) = bc.chain.last() {
                         if block.index <= last.index {
-                            format!("rejected: block index {} already exists (current height {})", block.index, last.index)
-                        } else if let Some(err) = bc.validate_block_verbose(&block, dyn_diff, false) {
+                            format!(
+                                "rejected: block index {} already exists (current height {})",
+                                block.index, last.index
+                            )
+                        } else if let Some(err) = bc.validate_block_verbose(&block, dyn_diff, false)
+                        {
                             format!("rejected: {}", err)
                         } else {
                             // validation passed, add block
@@ -272,17 +361,30 @@ async fn handle_connection(
                 };
 
                 // Send response after lock is released
-                writer.write_all(format!("{}\n", response).as_bytes()).await?;
+                writer
+                    .write_all(format!("{}\n", response).as_bytes())
+                    .await?;
             }
             "updatestats" => {
                 // Read next line for stats JSON
                 line.clear();
                 reader.read_line(&mut line).await?;
                 let v: serde_json::Value = serde_json::from_str(line.trim())?;
-                let wallet = v.get("wallet").and_then(|s| s.as_str()).unwrap_or("").to_string();
-                let hashrate = v.get("hashrate").and_then(|n| n.as_u64()).map(|n| n as f64)
-                    .or_else(|| v.get("hashrate").and_then(|n| n.as_f64())).unwrap_or(0.0);
-                let timestamp = v.get("timestamp").and_then(|n| n.as_i64()).unwrap_or_else(|| chrono::Utc::now().timestamp());
+                let wallet = v
+                    .get("wallet")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let hashrate = v
+                    .get("hashrate")
+                    .and_then(|n| n.as_u64())
+                    .map(|n| n as f64)
+                    .or_else(|| v.get("hashrate").and_then(|n| n.as_f64()))
+                    .unwrap_or(0.0);
+                let timestamp = v
+                    .get("timestamp")
+                    .and_then(|n| n.as_i64())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp());
                 if !wallet.is_empty() {
                     let mut map = wallet_hashrates.lock().unwrap();
                     map.insert(wallet, (hashrate, timestamp as u64));
@@ -292,7 +394,9 @@ async fn handle_connection(
             "getpeers" => {
                 let peers = _pm.get_peers();
                 let peers_json = serde_json::to_string(&peers)?;
-                writer.write_all(format!("{}\n", peers_json).as_bytes()).await?;
+                writer
+                    .write_all(format!("{}\n", peers_json).as_bytes())
+                    .await?;
             }
             "getlatest" => {
                 let response = {
@@ -303,7 +407,9 @@ async fn handle_connection(
                         serde_json::to_string(&serde_json::Value::Null)?
                     }
                 };
-                writer.write_all(format!("{}\n", response).as_bytes()).await?;
+                writer
+                    .write_all(format!("{}\n", response).as_bytes())
+                    .await?;
             }
             "getmempool" => {
                 let data = {
@@ -334,12 +440,15 @@ async fn handle_connection(
                         if now.saturating_sub(*ts) > 10 {
                             // stale - remove and return zero
                             map.remove(&addr);
-                            serde_json::json!({"wallet": addr, "hashrate": 0.0, "last_update": 0}).to_string()
+                            serde_json::json!({"wallet": addr, "hashrate": 0.0, "last_update": 0})
+                                .to_string()
                         } else {
-                            serde_json::json!({"wallet": addr, "hashrate": hr, "last_update": ts}).to_string()
+                            serde_json::json!({"wallet": addr, "hashrate": hr, "last_update": ts})
+                                .to_string()
                         }
                     } else {
-                        serde_json::json!({"wallet": addr, "hashrate": 0.0, "last_update": 0}).to_string()
+                        serde_json::json!({"wallet": addr, "hashrate": 0.0, "last_update": 0})
+                            .to_string()
                     }
                 };
                 writer.write_all(format!("{}\n", resp).as_bytes()).await?;
@@ -349,13 +458,15 @@ async fn handle_connection(
                 let now = chrono::Utc::now().timestamp() as u64;
                 let total: f64 = {
                     let map = wallet_hashrates.lock().unwrap();
-                    map.iter().filter_map(|(_k, (hr, ts))| {
-                        if now.saturating_sub(*ts) <= 10 {
-                            Some(*hr)
-                        } else {
-                            None
-                        }
-                    }).sum()
+                    map.iter()
+                        .filter_map(|(_k, (hr, ts))| {
+                            if now.saturating_sub(*ts) <= 10 {
+                                Some(*hr)
+                            } else {
+                                None
+                            }
+                        })
+                        .sum()
                 };
                 let resp = serde_json::json!({"network_hashrate": total}).to_string();
                 writer.write_all(format!("{}\n", resp).as_bytes()).await?;
@@ -371,12 +482,50 @@ async fn handle_connection(
                 if !valid {
                     writer.write_all(b"rejected: invalid signature\n").await?;
                 } else {
-                    // add to mempool
-                    {
-                        let mut mp = mempool.lock().unwrap();
-                        mp.push(tx);
+                    // Basic sanity checks
+                    if tx.amount <= 0 {
+                        writer.write_all(b"rejected: invalid amount\n").await?;
+                        continue;
                     }
-                    writer.write_all(b"ok\n").await?;
+
+                    // Compute on-chain balances
+                    let balances = {
+                        let bc = blockchain.lock().unwrap();
+                        let mut map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+                        for b in &bc.chain {
+                            for t in &b.transactions {
+                                let to = t.to.trim().to_lowercase();
+                                if t.from != "coinbase" {
+                                    let from = t.from.trim().to_lowercase();
+                                    *map.entry(from).or_insert(0) -= t.amount;
+                                }
+                                *map.entry(to).or_insert(0) += t.amount;
+                            }
+                        }
+                        map
+                    };
+
+                    // Compute pending outgoing from mempool for this sender
+                    let pending_out: i64 = {
+                        let mp = mempool.lock().unwrap();
+                        mp.iter()
+                            .filter(|t| t.from.trim().eq_ignore_ascii_case(&tx.from.trim().to_lowercase()))
+                            .map(|t| t.amount)
+                            .sum()
+                    };
+
+                    let from_key = tx.from.trim().to_lowercase();
+                    let onchain_bal = balances.get(&from_key).cloned().unwrap_or(0);
+                    if from_key != "coinbase" && onchain_bal - pending_out < tx.amount {
+                        writer.write_all(b"rejected: insufficient funds\n").await?;
+                    } else {
+                        // add to mempool
+                        {
+                            let mut mp = mempool.lock().unwrap();
+                            mp.push(tx);
+                        }
+                        writer.write_all(b"ok\n").await?;
+                    }
                 }
             }
             "submitshare" => {
@@ -386,9 +535,16 @@ async fn handle_connection(
 
                 let v: serde_json::Value = serde_json::from_str(line.trim())?;
                 // Extract fields
-                let wallet_addr = v.get("wallet").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                let wallet_addr = v
+                    .get("wallet")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let attempts_val = v.get("attempts").and_then(|n| n.as_u64()).unwrap_or(0);
-                let block_val = v.get("block").cloned().ok_or_else(|| anyhow!("missing block field"))?;
+                let block_val = v
+                    .get("block")
+                    .cloned()
+                    .ok_or_else(|| anyhow!("missing block field"))?;
                 let block: crate::blockchain::Block = serde_json::from_value(block_val)?;
 
                 let response = {
@@ -422,7 +578,9 @@ async fn handle_connection(
                 };
 
                 // Send response after lock is released
-                writer.write_all(format!("{}\n", response).as_bytes()).await?;
+                writer
+                    .write_all(format!("{}\n", response).as_bytes())
+                    .await?;
             }
             _ => {
                 writer.write_all(b"unknown command\n").await?;
