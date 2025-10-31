@@ -79,7 +79,7 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
                 let mut best_chain_len = 0usize;
                 let mut best_chain = None;
                 let mut sync_attempts = 0;
-                let mut local_latest_hash = {
+                let local_latest_hash = {
                     let bc = blockchain_sync.lock().unwrap();
                     bc.chain.last().map(|b| b.hash.clone())
                 };

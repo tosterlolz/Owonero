@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING, KeyPair};
 use ring::rand::SystemRandom;
-use std::fs;
 use anyhow::{Result, anyhow};
 use hex;
 
@@ -71,31 +70,38 @@ impl Wallet {
 }
 
 pub fn load_or_create_wallet(path: &str) -> Result<Wallet> {
-    let p = std::path::Path::new(path);
+    // Expand ~ to home directory if present
+    let expanded_path = if path.starts_with("~") {
+        if let Some(home) = std::env::var("HOME").ok() {
+            let mut p = home;
+            p.push_str(&path[1..]);
+            p
+        } else {
+            path.to_string()
+        }
+    } else {
+        path.to_string()
+    };
+    let p = std::path::Path::new(&expanded_path);
     if p.exists() {
-        let data = fs::read_to_string(path)?;
+        let data = std::fs::read_to_string(&expanded_path)?;
         let wallet: Wallet = serde_json::from_str(&data)?;
         Ok(wallet)
     } else {
-        // Ensure parent directories exist for the target path. On Windows
-        // users may pass paths like "C:\some\dir\wallet.json" or
-        // relative paths; creating parents avoids write errors.
+        // Ensure parent directories exist for the target path.
         if let Some(parent) = p.parent() {
             if !parent.as_os_str().is_empty() {
-                let _ = fs::create_dir_all(parent);
+                let _ = std::fs::create_dir_all(parent);
             }
         }
 
         let mut wallet = Wallet::new()?;
-        // Attempt to pick up the configured node address automatically so
-        // the wallet file contains a default node to talk to. This is
-        // best-effort and will silently continue if config can't be read.
         if let Ok(cfg) = crate::config::load_config() {
             wallet.node_address = Some(cfg.node_address);
         }
 
-        let data = serde_json::to_string_pretty(&wallet)?;
-        fs::write(path, data)?;
-        Ok(wallet)
+    let data = serde_json::to_string_pretty(&wallet)?;
+    std::fs::write(&expanded_path, data)?;
+    Ok(wallet)
     }
 }

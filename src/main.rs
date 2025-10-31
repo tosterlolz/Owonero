@@ -14,8 +14,7 @@ use std::sync::Arc;
 use colored::Colorize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-use crate::miner_ui::run_miner_ui;
-use std::fs;
+use crate::{miner_ui::run_miner_ui};
 use serde_json;
 
 const ASCII_LOGO: &str = r#"⡰⠁⠀⠀⢀⢔⣔⣤⠐⠒⠒⠒⠒⠠⠄⢀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀
@@ -64,7 +63,7 @@ struct Cli {
     web_port: u16,
 
     /// Wallet file path
-    #[arg(short = 'w', long, default_value = "wallet.json", value_hint = ValueHint::FilePath)]  // File path completion
+    #[arg(short = 'w', long, default_value_t = crate::config::get_wallet_path().to_string_lossy().to_string(), value_hint = ValueHint::FilePath)]
     wallet_path: String,
 
     /// Mine blocks
@@ -206,12 +205,18 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("Wallet not found or failed to load: {}. Creating a new wallet...", e);
             match crate::wallet::Wallet::new() {
                 Ok(wallet) => {
-                    let path = crate::config::get_wallet_path();
+                    let path = &config.wallet_path;
+                    let p = std::path::Path::new(path);
+                    if let Some(parent) = p.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                    }
                     if let Ok(data) = serde_json::to_string_pretty(&wallet) {
-                        if let Err(err) = fs::write(&path, data) {
-                            eprintln!("Failed to write new wallet to {}: {}", path.display(), err);
+                        if let Err(err) = std::fs::write(path, data) {
+                            eprintln!("Failed to write new wallet to {}: {}", path, err);
                         } else {
-                            eprintln!("Created new wallet at {}", path.display());
+                            eprintln!("Created new wallet at {}", path);
                         }
                     }
                 }

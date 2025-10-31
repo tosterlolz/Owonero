@@ -326,15 +326,14 @@ impl Drop for WalletUI {
 
 fn draw_wallet_info(f: &mut ratatui::Frame, area: Rect, wallet: &Wallet, blockchain: &Blockchain) {
     let balance = wallet.get_balance(blockchain);
-    let balance_owe = balance as f64;
 
     let wallet_info = format!(
         "Address:  {}\n\
          Balance:  {} OWE\n\
          Chain Height: {} blocks",
         &wallet.address,
-        format!("{:.3}", balance_owe),
-        blockchain.chain.len() - 1
+        balance,
+        blockchain.chain.len().saturating_sub(1)
     );
 
     let wallet_widget = Paragraph::new(wallet_info)
