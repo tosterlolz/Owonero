@@ -13,6 +13,20 @@ pub async fn ws_command(
     let (ws_stream, _) = connect_async(&url).await?;
     let (mut write, mut read) = ws_stream.split();
 
+    // Skip greeting if present
+    if let Some(greeting_msg) = read.next().await {
+        if let Ok(Message::Text(text)) = greeting_msg {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                if json.get("type").and_then(|t| t.as_str()) == Some("greeting") {
+                    // Greeting received and skipped, continue
+                } else {
+                    // Not a greeting, we need to parse it as a response
+                    // This shouldn't happen in normal flow, but just in case
+                }
+            }
+        }
+    }
+
     // Send command
     let cmd = serde_json::json!({"method": method, "params": params});
     write.send(Message::Text(cmd.to_string())).await?;
