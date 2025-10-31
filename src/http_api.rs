@@ -138,12 +138,27 @@ pub async fn get_wallet_balance(
     }
 }
 
+// Handler for /api/chain: returns the full blockchain as JSON
+
+pub async fn get_chain(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    match connect_to_daemon(&state.daemon_addr, "getchain").await {
+        Ok(chain_str) => {
+            match serde_json::from_str::<Value>(&chain_str) {
+                Ok(chain_obj) => Ok(Json(chain_obj)),
+                Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+            }
+        }
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 pub fn create_router(daemon_addr: String) -> Router {
     let state = AppState { daemon_addr };
 
     Router::new()
         .route("/stats", get(get_stats))
         .route("/api/stats", get(get_stats))
+        .route("/api/chain", get(get_chain))
         .route("/api/wallethashrate", get(get_wallet_hashrate))
         .route("/api/walletbalance", get(get_wallet_balance))
         .with_state(state)

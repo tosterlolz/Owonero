@@ -254,17 +254,14 @@ async fn main() -> anyhow::Result<()> {
 // Blockchain path lives in the config directory, use `config::get_blockchain_path()`.
 
 async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
-    let blockchain = if !cli.no_init {
-        let mut bc = blockchain::Blockchain::load_from_file(crate::config::get_blockchain_path())?;
-        if !cli.standalone {
-            eprintln!("Syncing blockchain...");
-            bc.sync(&config.peers).await?;
-        }
-        bc
-    } else {
-        blockchain::Blockchain::new()
+    // Always fetch blockchain from node
+    let client = reqwest::Client::new();
+    let node_addr = config.node_address.clone();
+    let url = format!("{}/api/chain", node_addr.trim_end_matches('/'));
+    let blockchain = match client.get(&url).send().await {
+        Ok(resp) => resp.json::<blockchain::Blockchain>().await.unwrap_or_else(|_| blockchain::Blockchain::new()),
+        Err(_) => blockchain::Blockchain::new(),
     };
-
     let blockchain = Arc::new(std::sync::Mutex::new(blockchain));
     let pm = Arc::new(daemon::PeerManager::new());
 
@@ -307,8 +304,16 @@ async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
 async fn run_tui_mode(config: config::Config) -> anyhow::Result<()> {
     // Load wallet using config wallet_path
     let wallet = crate::wallet::load_or_create_wallet(&config.wallet_path)?;
-    let blockchain = blockchain::Blockchain::load_from_file(crate::config::get_blockchain_path())?;
-
+    // Always fetch blockchain from node
+    let client = reqwest::Client::new();
+    let node_addr = wallet.node_address.clone()
+        .or_else(|| Some(config.node_address.clone()))
+        .unwrap_or_else(|| "http://127.0.0.1:6767".to_string());
+    let url = format!("{}/api/chain", node_addr.trim_end_matches('/'));
+    let blockchain = match client.get(&url).send().await {
+        Ok(resp) => resp.json::<blockchain::Blockchain>().await.unwrap_or_else(|_| blockchain::Blockchain::new()),
+        Err(_) => blockchain::Blockchain::new(),
+    };
     // Create UI and run
     let mut ui = wallet_ui::WalletUI::new()?;
     ui.run(wallet, blockchain).await?;

@@ -120,7 +120,7 @@ impl WalletUI {
         let client = Client::new();
         let node_addr = wallet.node_address.clone()
             .or_else(|| config.as_ref().map(|c| c.node_address.clone()))
-            .unwrap_or_else(|| "http://127.0.0.1:6767".to_string());
+            .unwrap_or_else(|| "http://owonero.yabai.buzz:6767".to_string());
 
         // Helper to fetch blockchain from node
         async fn fetch_chain(client: &Client, node_addr: &str) -> Option<Blockchain> {
@@ -135,6 +135,7 @@ impl WalletUI {
             }
         }
 
+        // Always fetch blockchain from node for initial load
         let mut blockchain = fetch_chain(&client, &node_addr).await.unwrap_or_else(|| Blockchain::new());
 
         self.add_log(format!("Wallet loaded: {}", &wallet.address[..8]));
