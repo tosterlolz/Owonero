@@ -11,7 +11,6 @@ mod ws_client;
 use clap::{Parser, ValueHint};
 use colored::Colorize;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use serde_json;
 
@@ -399,33 +398,14 @@ async fn run_tx_history_mode(config: config::Config) -> anyhow::Result<()> {
 
     // Optionally try to sync from the configured node to get up-to-date data
     if config.sync_on_startup {
-        if let Ok(stream) = tokio::net::TcpStream::connect(
-            &wallet
-                .node_address
-                .clone()
-                .unwrap_or(config.node_address.clone()),
-        )
-        .await
-        {
-            let (r, mut w) = stream.into_split();
-            let mut reader = tokio::io::BufReader::new(r);
-
-            // skip greeting
-            let mut greeting = String::new();
-            let _ = reader.read_line(&mut greeting).await;
-
-            // request chain
-            if w.write_all(b"getchain\n").await.is_ok() {
-                let mut chain_line = String::new();
-                if reader.read_line(&mut chain_line).await.is_ok() {
-                    if let Ok(new_chain) =
-                        serde_json::from_str::<crate::blockchain::Blockchain>(chain_line.trim())
-                    {
-                        if new_chain.chain.len() > blockchain.chain.len() {
-                            blockchain = new_chain;
-                        }
-                    }
-                }
+        let node_addr = wallet
+            .node_address
+            .clone()
+            .unwrap_or(config.node_address.clone());
+        
+        if let Ok(new_chain) = crate::ws_client::fetch_chain(&node_addr).await {
+            if new_chain.chain.len() > blockchain.chain.len() {
+                blockchain = new_chain;
             }
         }
     }
@@ -434,60 +414,38 @@ async fn run_tx_history_mode(config: config::Config) -> anyhow::Result<()> {
 
     println!("Transaction history for wallet: {}", wallet.address);
     // Try to fetch mempool from node and show pending txs involving this wallet
-    if let Some(mut node_addr) = wallet
+    if let Some(node_addr) = wallet
         .node_address
         .clone()
         .or(Some(config.node_address.clone()))
     {
-        if node_addr.starts_with("http://") {
-            node_addr = node_addr.trim_start_matches("http://").to_string();
-        } else if node_addr.starts_with("https://") {
-            node_addr = node_addr.trim_start_matches("https://").to_string();
-        }
-        if let Some(pos) = node_addr.find('/') {
-            node_addr = node_addr[..pos].to_string();
-        }
-        if let Ok(stream) = tokio::net::TcpStream::connect(&node_addr).await {
-            let (r, mut w) = stream.into_split();
-            let mut reader = tokio::io::BufReader::new(r);
-            let mut greeting = String::new();
-            let _ = reader.read_line(&mut greeting).await;
-            if w.write_all(b"getmempool\n").await.is_ok() {
-                let mut mempool_line = String::new();
-                if reader.read_line(&mut mempool_line).await.is_ok() {
-                    if let Ok(mempool_vec) = serde_json::from_str::<
-                        Vec<crate::blockchain::Transaction>,
-                    >(mempool_line.trim())
-                    {
-                        let mut found = false;
-                        for tx in mempool_vec.iter() {
-                            if tx.to.trim().to_lowercase() == my_addr
-                                || tx.from.trim().to_lowercase() == my_addr
-                            {
-                                if !found {
-                                    println!("PENDING transactions in mempool:");
-                                    found = true;
-                                }
-                                let dir = if tx.to.trim().to_lowercase() == my_addr {
-                                    "IN"
-                                } else {
-                                    "OUT"
-                                };
-                                println!(
-                                    "{} pending: {} -> {} amount: {} sig={}",
-                                    dir,
-                                    &tx.from[..std::cmp::min(8, tx.from.len())],
-                                    &tx.to[..std::cmp::min(8, tx.to.len())],
-                                    (tx.amount as f64) / 1000.0,
-                                    &tx.signature[..std::cmp::min(16, tx.signature.len())]
-                                );
-                            }
-                        }
-                        if found {
-                            println!("----");
-                        }
+        if let Ok(mempool_vec) = crate::ws_client::fetch_mempool(&node_addr).await {
+            let mut found = false;
+            for tx in mempool_vec.iter() {
+                if tx.to.trim().to_lowercase() == my_addr
+                    || tx.from.trim().to_lowercase() == my_addr
+                {
+                    if !found {
+                        println!("PENDING transactions in mempool:");
+                        found = true;
                     }
+                    let dir = if tx.to.trim().to_lowercase() == my_addr {
+                        "IN"
+                    } else {
+                        "OUT"
+                    };
+                    println!(
+                        "{} pending: {} -> {} amount: {} sig={}",
+                        dir,
+                        &tx.from[..std::cmp::min(8, tx.from.len())],
+                        &tx.to[..std::cmp::min(8, tx.to.len())],
+                        (tx.amount as f64) / 1000.0,
+                        &tx.signature[..std::cmp::min(16, tx.signature.len())]
+                    );
                 }
+            }
+            if found {
+                println!("----");
             }
         }
     }
@@ -551,19 +509,8 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
         node_addr = node_addr[..pos].to_string();
     }
 
-    // Connect to node and submit transaction
+    // Submit transaction via WebSocket
     println!("Connecting to node at {}", node_addr);
-    let stream = tokio::net::TcpStream::connect(&node_addr).await?;
-    let (r, mut w) = stream.into_split();
-    let mut reader = tokio::io::BufReader::new(r);
-
-    // Skip greeting line if present
-    let mut greeting = String::new();
-    let _ = reader.read_line(&mut greeting).await;
-
-    w.write_all(b"submittx\n").await?;
-    let tx_json = serde_json::to_string(&tx)?;
-    // Debug: print tx summary (not private key)
     println!(
         "Sending tx: from={} to={} amount={} signature_prefix={}",
         &tx.from[..std::cmp::min(8, tx.from.len())],
@@ -571,108 +518,48 @@ async fn run_send_mode(cli: Cli, config: config::Config) -> anyhow::Result<()> {
         (tx.amount as f64) / 1000.0,
         &tx.signature[..std::cmp::min(16, tx.signature.len())]
     );
-    w.write_all(format!("{}\n", tx_json).as_bytes()).await?;
 
-    // Read response
-    let mut response = String::new();
-    reader.read_line(&mut response).await?;
-    let resp = response.trim().to_string();
-    if resp == "unknown command" {
-        println!("Node does not recognize 'submittx' - trying peers from node's peer list...");
-
-        // Try peers returned by node.getpeers()
-        if let Ok(peer_stream) = tokio::net::TcpStream::connect(&config.node_address).await {
-            let (pr, mut pw) = peer_stream.into_split();
-            let mut peer_reader = tokio::io::BufReader::new(pr);
-            // skip greeting
-            let mut tmp = String::new();
-            let _ = peer_reader.read_line(&mut tmp).await;
-            // request peers
-            pw.write_all(b"getpeers\n").await?;
-            let mut peers_line = String::new();
-            if peer_reader.read_line(&mut peers_line).await.is_ok() {
-                if let Ok(peers_vec) = serde_json::from_str::<Vec<String>>(peers_line.trim()) {
-                    for peer in peers_vec {
-                        if peer.is_empty() {
-                            continue;
-                        }
-                        println!("Trying peer {}...", peer);
-                        if let Ok(s) = tokio::net::TcpStream::connect(&peer).await {
-                            let (r2, mut w2) = s.into_split();
-                            let mut rbuf = tokio::io::BufReader::new(r2);
-                            let mut greet = String::new();
-                            let _ = rbuf.read_line(&mut greet).await;
-                            w2.write_all(b"submittx\n").await?;
-                            w2.write_all(format!("{}\n", tx_json).as_bytes()).await?;
-                            let mut peer_resp = String::new();
-                            if rbuf.read_line(&mut peer_resp).await.is_ok() {
-                                let peer_resp = peer_resp.trim();
-                                println!("Peer {} responded: {}", peer, peer_resp);
-                                if peer_resp == "ok" {
-                                    println!("Transaction accepted by peer {}", peer);
-                                    return Ok(());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        println!(
-            "Failed to submit transaction: no peers accepted submittx. Either the node is outdated or no peers support transaction submission."
-        );
-        return Ok(());
-    } else {
-        println!("Node response: {}", resp);
-        // If node rejected due to signature, print local verification result for debugging
-        if resp.starts_with("rejected") || resp.starts_with("error") {
-            let valid = crate::blockchain::verify_transaction_signature(&tx, &tx.pub_key);
-            println!(
-                "Local signature verification: {}",
-                if valid { "OK" } else { "FAILED" }
-            );
-        }
-
-        // Immediately probe the node's mempool to confirm the tx is present (helpful when "ok" is returned)
-        let probe_addr = node_addr.clone();
-        if let Ok(s) = tokio::net::TcpStream::connect(&probe_addr).await {
-            let (r, mut w2) = s.into_split();
-            let mut rbuf = tokio::io::BufReader::new(r);
-            // skip greeting
-            let mut g = String::new();
-            let _ = rbuf.read_line(&mut g).await;
-            if w2.write_all(b"getmempool\n").await.is_ok() {
-                let mut memline = String::new();
-                if rbuf.read_line(&mut memline).await.is_ok() {
-                    if let Ok(mempool_vec) =
-                        serde_json::from_str::<Vec<crate::blockchain::Transaction>>(memline.trim())
+    match crate::ws_client::submit_tx(&node_addr, &tx).await {
+        Ok(status) if status == "ok" => {
+            println!("Node response: {}", status);
+            
+            // Probe mempool to confirm transaction is present
+            if let Ok(mempool_vec) = crate::ws_client::fetch_mempool(&node_addr).await {
+                let mut found = false;
+                for ptx in mempool_vec.iter() {
+                    if ptx.signature == tx.signature
+                        || (ptx.from == tx.from
+                            && ptx.to == tx.to
+                            && ptx.amount == tx.amount)
                     {
-                        let mut found = false;
-                        for ptx in mempool_vec.iter() {
-                            if ptx.signature == tx.signature
-                                || (ptx.from == tx.from
-                                    && ptx.to == tx.to
-                                    && ptx.amount == tx.amount)
-                            {
-                                println!(
-                                    "Probe: transaction is present in node mempool (signature prefix={})",
-                                    &ptx.signature[..std::cmp::min(16, ptx.signature.len())]
-                                );
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
-                            println!("Probe: transaction NOT found in node mempool");
-                        }
-                    } else {
-                        println!("Probe: failed to parse mempool response");
+                        println!(
+                            "Probe: transaction is present in node mempool (signature prefix={})",
+                            &ptx.signature[..std::cmp::min(16, ptx.signature.len())]
+                        );
+                        found = true;
+                        break;
                     }
                 }
+                if !found {
+                    println!("Probe: transaction NOT found in node mempool");
+                }
             }
+            Ok(())
+        }
+        Ok(status) => {
+            println!("Node response: {}", status);
+            if status.starts_with("rejected") || status.starts_with("error") {
+                let valid = crate::blockchain::verify_transaction_signature(&tx, &tx.pub_key);
+                println!(
+                    "Local signature verification: {}",
+                    if valid { "OK" } else { "FAILED" }
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Failed to submit transaction to node: {}", e);
+            Err(e)
         }
     }
-
-    Ok(())
 }
