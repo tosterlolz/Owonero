@@ -57,6 +57,103 @@ pub async fn run_daemon(port: u16, blockchain: Arc<Mutex<Blockchain>>, pm: Arc<P
         });
     }
 
+    // Configurable sync interval (seconds)
+    let sync_interval_secs = std::env::var("OWONERO_SYNC_INTERVAL")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
+    // Limit sync attempts per interval
+    let max_sync_attempts = 3;
+    if !standalone {
+        let blockchain_sync = blockchain.clone();
+        let pm_sync = pm.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(sync_interval_secs));
+            loop {
+                interval.tick().await;
+                let peers = pm_sync.get_peers();
+                if peers.is_empty() {
+                    continue;
+                }
+                let mut best_peer = None;
+                let mut best_chain_len = 0usize;
+                let mut best_chain = None;
+                let mut sync_attempts = 0;
+                let mut local_latest_hash = {
+                    let bc = blockchain_sync.lock().unwrap();
+                    bc.chain.last().map(|b| b.hash.clone())
+                };
+                for peer in peers {
+                    if sync_attempts >= max_sync_attempts {
+                        break;
+                    }
+                    sync_attempts += 1;
+                    match tokio::net::TcpStream::connect(&peer).await {
+                        Ok(mut stream) => {
+                            let (r, mut w) = stream.split();
+                            let mut reader = BufReader::new(r);
+                            if let Err(e) = w.write_all(b"getlatest\n").await {
+                                eprintln!("[sync] Failed to request latest block from {}: {}", peer, e);
+                                continue;
+                            }
+                            let mut line = String::new();
+                            if let Ok(_) = reader.read_line(&mut line).await {
+                                if let Ok(peer_latest) = serde_json::from_str::<crate::blockchain::Block>(line.trim()) {
+                                    if let Some(local_hash) = &local_latest_hash {
+                                        if peer_latest.hash != *local_hash {
+                                            // Request full chain from peer
+                                            if let Err(e) = w.write_all(b"getchain\n").await {
+                                                eprintln!("[sync] Failed to request chain from {}: {}", peer, e);
+                                                continue;
+                                            }
+                                            let mut chain_data = String::new();
+                                            if let Ok(_) = reader.read_line(&mut chain_data).await {
+                                                if let Ok(peer_chain) = serde_json::from_str::<crate::blockchain::Blockchain>(chain_data.trim()) {
+                                                    let peer_len = peer_chain.chain.len();
+                                                    if peer_len > best_chain_len {
+                                                        best_chain_len = peer_len;
+                                                        best_peer = Some(peer.clone());
+                                                        best_chain = Some(peer_chain);
+                                                    }
+                                                } else {
+                                                    eprintln!("[sync] Failed to parse chain from {}", peer);
+                                                }
+                                            } else {
+                                                eprintln!("[sync] Failed to read chain data from {}", peer);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    eprintln!("[sync] Failed to parse latest block from {}", peer);
+                                }
+                            } else {
+                                eprintln!("[sync] Failed to read latest block from {}", peer);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[sync] Could not connect to peer {}: {}", peer, e);
+                        }
+                    }
+                }
+                // Sync from best peer if chain is longer
+                if let (Some(peer), Some(chain)) = (best_peer, best_chain) {
+                    let mut bc = blockchain_sync.lock().unwrap();
+                    if chain.chain.len() > bc.chain.len() {
+                        let old_height = bc.chain.len();
+                        let old_hash = bc.chain.last().map(|b| b.hash.clone()).unwrap_or_default();
+                        bc.chain = chain.chain;
+                        if let Err(e) = bc.save_to_file("blockchain.json") {
+                            eprintln!("[sync] Failed to save synced blockchain: {}", e);
+                        }
+                        let new_height = bc.chain.len();
+                        let new_hash = bc.chain.last().map(|b| b.hash.clone()).unwrap_or_default();
+                        eprintln!("[sync] Synced blockchain from peer {}: height {}→{}, hash {}→{}", peer, old_height, new_height, old_hash, new_hash);
+                    }
+                }
+            }
+        });
+    }
+
     loop {
         // Accept connections but don't crash the whole daemon if accept fails;
         // log the error and continue accepting. This prevents transient OS
