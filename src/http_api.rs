@@ -14,6 +14,16 @@ pub struct AppState {
     pub daemon_addr: String,
 }
 
+// #[derive(Serialize, Deserialize)]
+// pub struct StatsResponse {
+//     pub chain: Option<Value>,
+//     pub height: Option<u64>,
+//     pub peers: Option<Vec<String>>,
+//     pub latest_block: Option<Value>,
+//     pub mempool: Option<Vec<Value>>,
+//     pub network_hashrate: Option<f64>,
+// }
+
 #[derive(Serialize, Deserialize)]
 pub struct WalletHashrateResponse {
     pub wallet: String,
@@ -112,7 +122,7 @@ pub async fn get_wallet_balance(
     match connect_to_daemon(&state.daemon_addr, "getchain").await {
         Ok(chain_str) => {
             match serde_json::from_str::<Value>(&chain_str) {
-                Ok(_chain_obj) => {
+                Ok(chain_obj) => {
                     // For now, return the chain info
                     // In a real implementation, you'd calculate the balance from the chain
                     Ok(Json(json!({
@@ -128,98 +138,10 @@ pub async fn get_wallet_balance(
     }
 }
 
-async fn get_index() -> Result<String, StatusCode> {
-    match tokio::fs::read_to_string("index.html").await {
-        Ok(content) => Ok(content),
-        Err(_) => {
-            // If index.html not found, return a simple HTML page with the stats UI
-            Ok(r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Owonero - Blockchain Stats</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>
-    body { font-family: 'Roboto', sans-serif; background: #f5f5f5; }
-    .hero { background: linear-gradient(135deg, #4a90e2, #50e3c2); color: white; padding: 3rem 2rem; text-align: center; }
-    section { padding: 2rem 0; }
-    footer { background: #1a1a1a; color: white; padding: 2rem 0; text-align: center; }
-  </style>
-</head>
-<body>
-<section class="hero">
-  <div class="container">
-    <h1>Owonero Blockchain Stats</h1>
-    <p>Real-time statistics from the Owonero blockchain</p>
-  </div>
-</section>
-
-<section id="stats">
-  <div class="container">
-    <h2 class="text-center mb-4">Network Statistics</h2>
-    <div id="statsContainer" class="row justify-content-center">
-      <div class="col-md-8">
-        <div class="card p-3 mb-3">
-          <h5>Block Height</h5>
-          <p id="heightDisplay" class="lead">Loading...</p>
-        </div>
-        <div class="card p-3 mb-3">
-          <h5>Network Hashrate</h5>
-          <p id="hashrateDisplay" class="lead">Loading...</p>
-        </div>
-        <div class="card p-3 mb-3">
-          <h5>Peers Connected</h5>
-          <p id="peersDisplay" class="lead">Loading...</p>
-        </div>
-        <div id="statsError" class="alert alert-warning d-none" role="alert"></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<footer>
-  <div class="container">
-    <p>&copy; 2025 Owonero. <a href="https://github.com/tosterlolz/Owonero" class="text-white">GitHub</a></p>
-  </div>
-</footer>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-async function pollStats() {
-  try {
-    const res = await fetch('/api/stats');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const stats = await res.json();
-    
-    document.getElementById('statsError').classList.add('d-none');
-    document.getElementById('heightDisplay').textContent = (stats.height || 0) + ' blocks';
-    document.getElementById('hashrateDisplay').textContent = (stats.network_hashrate || 0).toFixed(2) + ' H/s';
-    document.getElementById('peersDisplay').textContent = (stats.peers ? stats.peers.length : 0) + ' peers';
-  } catch (e) {
-    console.error('Error fetching stats:', e);
-    const err = document.getElementById('statsError');
-    err.textContent = 'Failed to fetch stats: ' + e.message;
-    err.classList.remove('d-none');
-  }
-}
-
-// Poll every 2 seconds
-pollStats();
-setInterval(pollStats, 2000);
-</script>
-</body>
-</html>"#.to_string())
-        }
-    }
-}
-
 pub fn create_router(daemon_addr: String) -> Router {
     let state = AppState { daemon_addr };
 
     Router::new()
-        .route("/", get(get_index))
-        .route("/index.html", get(get_index))
         .route("/stats", get(get_stats))
         .route("/api/stats", get(get_stats))
         .route("/api/wallethashrate", get(get_wallet_hashrate))

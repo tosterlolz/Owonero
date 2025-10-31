@@ -446,6 +446,8 @@ pub async fn start_mining(
     let mut worker_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
     for _id in 0..threads {
     let wallet_address = wallet.address.clone();
+    let wallet_pub_key = wallet.pub_key.clone();
+    let wallet_priv_key = wallet.priv_key.clone();
     let blockchain = blockchain.clone();
     let mempool_shared = mempool_shared.clone();
     let attempts = attempts.clone();
@@ -454,7 +456,9 @@ pub async fn start_mining(
     let latest_block_worker = latest_block.clone();
     let log_tx_worker = log_tx.clone();
     let chain_version_worker = chain_version.clone();
-        let handle = std::thread::spawn(move || {
+    let wallet_pub_key = wallet_pub_key.clone();
+    let wallet_priv_key = wallet_priv_key.clone();
+    let handle = std::thread::spawn(move || {
             loop {
                 if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
@@ -497,13 +501,16 @@ pub async fn start_mining(
                     .ok()
                     .and_then(|s| s.parse::<i64>().ok())
                     .unwrap_or(1);
-                mempool_with_coinbase.push(crate::blockchain::Transaction {
+                let mut coinbase_tx = crate::blockchain::Transaction {
                     from: "coinbase".to_string(),
-                    pub_key: String::new(),
+                    pub_key: wallet_pub_key.clone(),
                     to: wallet_address.clone(),
                     amount: reward_amount,
                     signature: String::new(),
-                });
+                };
+                // Sign the coinbase transaction with the miner's private key
+                let _ = crate::blockchain::sign_transaction(&mut coinbase_tx, &wallet_priv_key);
+                mempool_with_coinbase.push(coinbase_tx);
                 // Append existing mempool txs after coinbase
                 mempool_with_coinbase.extend(mempool_txs.into_iter());
 

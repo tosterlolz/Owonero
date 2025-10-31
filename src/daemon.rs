@@ -138,19 +138,38 @@ async fn handle_connection(
                     let mut bc = blockchain.lock().unwrap();
                     let dyn_diff = bc.get_dynamic_difficulty();
 
-                    if let Some(err) = bc.validate_block_verbose(&block, dyn_diff, false) {
-                        format!("rejected: {}", err)
-                    } else {
-                        // validation passed, add block
-                        let added = bc.add_block(block, dyn_diff);
-                        if added {
-                            // Save blockchain
-                            if let Err(e) = bc.save_to_file("blockchain.json") {
-                                eprintln!("Failed to save blockchain: {}", e);
-                            }
-                            String::from("ok")
+                    // Check if block index already exists
+                    if let Some(last) = bc.chain.last() {
+                        if block.index <= last.index {
+                            format!("rejected: block index {} already exists (current height {})", block.index, last.index)
+                        } else if let Some(err) = bc.validate_block_verbose(&block, dyn_diff, false) {
+                            format!("rejected: {}", err)
                         } else {
-                            String::from("error: failed to add block")
+                            // validation passed, add block
+                            let added = bc.add_block(block, dyn_diff);
+                            if added {
+                                if let Err(e) = bc.save_to_file("blockchain.json") {
+                                    eprintln!("Failed to save blockchain: {}", e);
+                                }
+                                String::from("ok")
+                            } else {
+                                String::from("error: failed to add block")
+                            }
+                        }
+                    } else {
+                        // No blocks yet, allow genesis
+                        if let Some(err) = bc.validate_block_verbose(&block, dyn_diff, false) {
+                            format!("rejected: {}", err)
+                        } else {
+                            let added = bc.add_block(block, dyn_diff);
+                            if added {
+                                if let Err(e) = bc.save_to_file("blockchain.json") {
+                                    eprintln!("Failed to save blockchain: {}", e);
+                                }
+                                String::from("ok")
+                            } else {
+                                String::from("error: failed to add block")
+                            }
                         }
                     }
                 };
