@@ -344,10 +344,6 @@ async fn run_mining_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
 
 async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
     let wallet = crate::wallet::load_or_create_wallet(&config.wallet_path)?;
-    // Try to sync the local chain from a configured node. Prefer the node
-    // address stored in the wallet (if present), otherwise fall back to
-    // the CLI/config node address. This allows wallets to remember which
-    // node they primarily communicate with.
     let node_to_use = wallet
         .node_address
         .clone()
@@ -358,146 +354,25 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
         blockchain::Blockchain::load_from_file(crate::config::get_blockchain_path())?;
 
     if config.sync_on_startup {
-        if let Ok(stream) = tokio::net::TcpStream::connect(&node_to_use).await {
-            let (r, mut w) = stream.into_split();
-            let mut reader = tokio::io::BufReader::new(r);
-
-            // skip greeting
-            let mut greeting = String::new();
-            let _ = reader.read_line(&mut greeting).await;
-            // Try partial sync: request latest block header then fetch only missing blocks
-            if w.write_all(b"getlatest\n").await.is_ok() {
-                let mut latest_line = String::new();
-                if reader.read_line(&mut latest_line).await.is_ok() {
-                    if let Ok(node_latest) =
-                        serde_json::from_str::<crate::blockchain::Block>(latest_line.trim())
-                    {
-                        let local_height = blockchain.chain.last().map(|b| b.index).unwrap_or(0);
-                        let node_height = node_latest.index;
-                        if node_height > local_height {
-                            println!(
-                                "Partial sync: fetching blocks {}..{} from {}",
-                                local_height + 1,
-                                node_height,
-                                node_to_use
-                            );
-
-                            // Fetch missing blocks one by one using getblock
-                            let mut success = true;
-                            for idx in (local_height + 1)..=node_height {
-                                let cmd = format!("getblock {}\n", idx);
-                                if w.write_all(cmd.as_bytes()).await.is_err() {
-                                    eprintln!("Failed to request block {} from node", idx);
-                                    success = false;
-                                    break;
-                                }
-                                let mut block_line = String::new();
-                                if reader.read_line(&mut block_line).await.is_err() {
-                                    eprintln!("Failed to read block {} from node", idx);
-                                    success = false;
-                                    break;
-                                }
-
-                                let block_trim = block_line.trim();
-                                if block_trim.starts_with("error:") || block_trim.is_empty() {
-                                    eprintln!(
-                                        "Node did not return block {} (response: {}), falling back to full chain",
-                                        idx, block_trim
-                                    );
-                                    success = false;
-                                    break;
-                                }
-
-                                match serde_json::from_str::<crate::blockchain::Block>(block_trim) {
-                                    Ok(block) => {
-                                        // compute dynamic difficulty from current chain state
-                                        let dyn_diff = blockchain.get_dynamic_difficulty();
-                                        if blockchain.validate_block(&block, dyn_diff, false) {
-                                            blockchain.chain.push(block);
-                                        } else {
-                                            eprintln!(
-                                                "Received invalid block {} during partial sync; aborting",
-                                                idx
-                                            );
-                                            success = false;
-                                            break;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to parse block {} from node: {}", idx, e);
-                                        success = false;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if success {
-                                let _ =
-                                    blockchain.save_to_file(crate::config::get_blockchain_path());
-                                println!(
-                                    "Partial sync complete: new height {}",
-                                    blockchain.chain.last().map(|b| b.index).unwrap_or(0)
-                                );
-                            } else {
-                                // Fallback: request full chain if partial sync failed
-                                eprintln!(
-                                    "Partial sync failed; attempting full chain fetch as fallback"
-                                );
-                                // Rewind the reader/writer by asking getchain
-                                if w.write_all(b"getchain\n").await.is_ok() {
-                                    let mut chain_line = String::new();
-                                    if reader.read_line(&mut chain_line).await.is_ok() {
-                                        if let Ok(new_chain) =
-                                            serde_json::from_str::<crate::blockchain::Blockchain>(
-                                                chain_line.trim(),
-                                            )
-                                        {
-                                            if new_chain.chain.len() > blockchain.chain.len() {
-                                                blockchain = new_chain;
-                                                let _ = blockchain.save_to_file(
-                                                    crate::config::get_blockchain_path(),
-                                                );
-                                                println!(
-                                                    "Synchronized blockchain from node {}",
-                                                    node_to_use
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Couldn't parse latest; fall back to full chain fetch
-                        eprintln!("Failed to parse latest block from node, requesting full chain");
-                        if w.write_all(b"getchain\n").await.is_ok() {
-                            let mut chain_line = String::new();
-                            if reader.read_line(&mut chain_line).await.is_ok() {
-                                if let Ok(new_chain) =
-                                    serde_json::from_str::<crate::blockchain::Blockchain>(
-                                        chain_line.trim(),
-                                    )
-                                {
-                                    if new_chain.chain.len() > blockchain.chain.len() {
-                                        blockchain = new_chain;
-                                        let _ = blockchain
-                                            .save_to_file(crate::config::get_blockchain_path());
-                                        println!(
-                                            "Synchronized blockchain from node {}",
-                                            node_to_use
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
+        // Fetch chain via WebSocket
+        match crate::ws_client::fetch_chain(&node_to_use).await {
+            Ok(new_chain) => {
+                if new_chain.chain.len() > blockchain.chain.len() {
+                    blockchain = new_chain;
+                    let _ =
+                        blockchain.save_to_file(crate::config::get_blockchain_path());
+                    println!(
+                        "Synchronized blockchain from node {}",
+                        node_to_use
+                    );
                 }
             }
-        } else {
-            eprintln!(
-                "Warning: failed to connect to node {} to sync blockchain",
-                node_to_use
-            );
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to sync blockchain from node {}: {}",
+                    node_to_use, e
+                );
+            }
         }
     }
 
@@ -511,11 +386,6 @@ async fn run_wallet_info_mode(config: config::Config) -> anyhow::Result<()> {
         (balance as f64) / 1000.0
     );
     println!("{} {}", "Chain height:".cyan(), blockchain.chain.len() - 1);
-
-    // Diagnostic: list any transactions that involve this wallet so the user
-    // can see why the balance is what it is. This helps when blocks appear
-    // to be mined but the wallet still shows zero balance.
-    // println!("Diagnostics: scanning chain for transactions involving this wallet...");
 
     Ok(())
 }
