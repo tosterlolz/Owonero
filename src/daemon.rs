@@ -241,7 +241,9 @@ async fn process_command(
                     }
                 }
                 "submittx" => {
-                    if let Some(tx_val) = json.get("tx") {
+                    // Check both top-level and params for backward compatibility
+                    let tx_val = json.get("tx").or_else(|| json.get("params").and_then(|p| p.get("tx")));
+                    if let Some(tx_val) = tx_val {
                         match serde_json::from_value::<crate::blockchain::Transaction>(
                             tx_val.clone(),
                         ) {
@@ -304,7 +306,9 @@ async fn process_command(
                     }
                 }
                 "submitblock" => {
-                    if let Some(block_val) = json.get("block") {
+                    // Check both top-level and params for backward compatibility
+                    let block_val = json.get("block").or_else(|| json.get("params").and_then(|p| p.get("block")));
+                    if let Some(block_val) = block_val {
                         match serde_json::from_value::<crate::blockchain::Block>(block_val.clone())
                         {
                             Ok(block) => {

@@ -2,6 +2,7 @@ mod blockchain;
 mod completions;
 mod config;
 mod daemon;
+mod http_api;
 mod miner;
 mod miner_ui;
 mod update;
@@ -257,6 +258,13 @@ async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
     }
 
     let daemon_port = config.daemon_port;
+    let web_port = config.web_port;
+    let daemon_addr = format!("127.0.0.1:{}", daemon_port);
+
+    println!(
+        "{}",
+        format!("Starting daemon on :{} and stats server on :{}", daemon_port, web_port).cyan()
+    );
 
     // Spawn WebSocket daemon
     let standalone = cli.standalone;
@@ -268,9 +276,17 @@ async fn run_daemon_mode(cli: Cli, config: config::Config) -> anyhow::Result<()>
         }
     });
 
+    // Spawn HTTP stats server
+    let http_handle = tokio::spawn(async move {
+        if let Err(e) = http_api::run_http_server(web_port, daemon_addr).await {
+            eprintln!("HTTP server error: {}", e);
+        }
+    });
+
     // Wait for daemon to finish or Ctrl+C
     tokio::select! {
         _ = daemon_handle => {},
+        _ = http_handle => {},
         _ = tokio::signal::ctrl_c() => {
             println!("Shutting down daemon...");
         }
